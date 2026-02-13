@@ -37,7 +37,7 @@ def extract_token_usage(log_text: str) -> dict[str, Any]:
         ],
         "total_tokens": [
             r"total[_\s-]?tokens?\s*[:=]\s*([0-9][0-9,]*)",
-            r"tokens?\s+used\s*[:=]\s*([0-9][0-9,]*)",
+            r"tokens?\s+used\s*(?:[:=]\s*)?([0-9][0-9,]*)",
         ],
     }
 
@@ -92,6 +92,8 @@ def main() -> None:
 
     output = {
         "run_id": meta.get("run_id"),
+        "session_id": meta.get("session_id"),
+        "resume_session": meta.get("resume_session"),
         "repo": meta.get("repo"),
         "task": meta.get("task"),
         "started_at": meta.get("started_at"),

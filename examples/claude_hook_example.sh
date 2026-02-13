@@ -3,9 +3,11 @@ set -euo pipefail
 
 # Example: Claude passes TASK and REPO into this script.
 TASK="${1:-Implement requested coding task}"
-REPO="${2:-/lump/apps/some-repo}"
+REPO="${2:-.}"
 
-BASE_DIR="/lump/apps/invoke-codex-from-claude"
+# Resolve project root from this file location.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNNER="$BASE_DIR/scripts/run_codex_task.sh"
 LOG_DIR="$BASE_DIR/runs"
 
