@@ -15,6 +15,7 @@ def codex_task(
     task: str,
     model: str = "gpt-5.1-codex-max",
     resume_session: str = "",
+    timeout_seconds: int = 1800,
 ) -> dict:
     """
     Invoke Codex with fire-and-forget execution and smart failure detection.
@@ -24,6 +25,7 @@ def codex_task(
         task: Task description for Codex
         model: Codex model to use (mini, max, or 5.2)
         resume_session: Optional session ID to resume
+        timeout_seconds: Maximum wait time in seconds for the subprocess
 
     Returns:
         dict with run_id, log_file, meta_file, session_id (when available)
@@ -35,7 +37,6 @@ def codex_task(
     repo_root = tool_file.parent.parent.parent.parent.parent  # tools -> codex -> skills -> .claude -> repo root
     script_dir = repo_root / "scripts"
     wrapper = script_dir / "invoke_codex_with_review.sh"
-    runner = script_dir / "run_codex_task.sh"
 
     if not wrapper.exists():
         return {
@@ -44,23 +45,17 @@ def codex_task(
         }
 
     # Build command
+    cmd = [
+        str(wrapper),
+        "--repo", repo,
+    ]
     if resume_session:
-        cmd = [
-            str(runner),
-            "--repo", repo,
-            "--resume", resume_session,
-            "--task", task,
-            "--",
-            "--model", model,
-        ]
-    else:
-        cmd = [
-            str(wrapper),
-            "--repo", repo,
-            "--task", task,
-            "--",
-            "--model", model,
-        ]
+        cmd.extend(["--resume", resume_session])
+    cmd.extend([
+        "--task", task,
+        "--",
+        "--model", model,
+    ])
 
     try:
         # Execute wrapper and parse structured output.
@@ -68,7 +63,7 @@ def codex_task(
             cmd,
             capture_output=True,
             text=True,
-            timeout=300,  # 5 minutes max
+            timeout=timeout_seconds,
             cwd=script_dir.parent,
         )
 
@@ -100,8 +95,12 @@ def codex_task(
         return response
 
     except subprocess.TimeoutExpired:
+        timeout_minutes = timeout_seconds / 60
         return {
-            "error": "Codex task timed out after 5 minutes",
+            "error": (
+                "Codex task timed out after "
+                f"{timeout_minutes:.1f} minutes ({timeout_seconds} seconds)"
+            ),
             "success": False,
         }
     except Exception as e:
@@ -115,13 +114,20 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 3:
-        print("Usage: codex_task.py <repo> <task> [model] [resume_session]")
+        print("Usage: codex_task.py <repo> <task> [model] [resume_session] [timeout_seconds]")
         sys.exit(1)
 
     repo = sys.argv[1]
     task = sys.argv[2]
     model = sys.argv[3] if len(sys.argv) > 3 else "gpt-5.1-codex-max"
     resume_session = sys.argv[4] if len(sys.argv) > 4 else ""
+    timeout_seconds = 1800
+    if len(sys.argv) > 5:
+        try:
+            timeout_seconds = int(sys.argv[5])
+        except ValueError:
+            print("timeout_seconds must be an integer")
+            sys.exit(1)
 
-    result = codex_task(repo, task, model, resume_session)
+    result = codex_task(repo, task, model, resume_session, timeout_seconds)
     print(json.dumps(result, indent=2))

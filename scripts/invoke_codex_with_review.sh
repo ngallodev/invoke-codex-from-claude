@@ -6,7 +6,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNNER="$SCRIPT_DIR/run_codex_task.sh"
-ORIGINAL_ARGS=("$@")
+
+usage() {
+  "$RUNNER" --help
+}
 
 REPO=""
 TASK=""
@@ -70,13 +73,15 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-      shift
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
       ;;
   esac
 done
 
 if [[ "$SHOW_HELP" -eq 1 ]]; then
-  "$RUNNER" --help
+  usage
   exit 0
 fi
 
@@ -178,8 +183,31 @@ PY
 
 echo "Launching Codex task..."
 
+RUNNER_ARGS=(--repo "$REPO")
+if [[ -n "$TASK" ]]; then
+  RUNNER_ARGS+=(--task "$TASK")
+fi
+if [[ -n "$NOTIFY_CMD" ]]; then
+  RUNNER_ARGS+=(--notify-cmd "$NOTIFY_CMD")
+fi
+if [[ -n "$EVENT_STREAM" ]]; then
+  RUNNER_ARGS+=(--event-stream "$EVENT_STREAM")
+fi
+if [[ -n "$CODEX_BIN" ]]; then
+  RUNNER_ARGS+=(--codex-bin "$CODEX_BIN")
+fi
+if [[ -n "$LOG_DIR" ]]; then
+  RUNNER_ARGS+=(--log-dir "$LOG_DIR")
+fi
+if [[ -n "$LOG_VERBOSITY" ]]; then
+  RUNNER_ARGS+=(--verbosity "$LOG_VERBOSITY")
+fi
+if [[ "${#EXTRA_ARGS[@]}" -gt 0 ]]; then
+  RUNNER_ARGS+=(-- "${EXTRA_ARGS[@]}")
+fi
+
 set +e
-RUN_OUTPUT="$(run_and_capture "${ORIGINAL_ARGS[@]}")"
+RUN_OUTPUT="$(run_and_capture "${RUNNER_ARGS[@]}")"
 EXIT_CODE=$?
 set -e
 

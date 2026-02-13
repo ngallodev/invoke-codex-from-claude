@@ -89,7 +89,7 @@ if [[ "$SYNTAX_CHECK" == "1" ]]; then
   SYNTAX_ERRORS=0
 
   # Check bash scripts
-  for file in $(git diff --name-only HEAD 2>/dev/null | grep '\.sh$' || true); do
+  for file in $(( git diff --name-only HEAD 2>/dev/null; git diff --name-only HEAD~1..HEAD 2>/dev/null ) | sort -u | grep '\.sh$' || true); do
     if [[ -f "$file" ]]; then
       if bash -n "$file" 2>/dev/null; then
         echo "  ✓ $file - valid syntax"
@@ -101,7 +101,7 @@ if [[ "$SYNTAX_CHECK" == "1" ]]; then
   done
 
   # Check Python files
-  for file in $(git diff --name-only HEAD 2>/dev/null | grep '\.py$' || true); do
+  for file in $(( git diff --name-only HEAD 2>/dev/null; git diff --name-only HEAD~1..HEAD 2>/dev/null ) | sort -u | grep '\.py$' || true); do
     if [[ -f "$file" ]]; then
       if python3 -m py_compile "$file" 2>/dev/null; then
         echo "  ✓ $file - valid syntax"

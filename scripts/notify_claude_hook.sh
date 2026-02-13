@@ -73,10 +73,9 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 127
 fi
 
-curl --silent --show-error --fail \
+printf '%s' "$PAYLOAD" | curl --silent --show-error --fail \
   --max-time "$TIMEOUT" \
   -H "Content-Type: application/json" \
   -X POST \
-  --data "$PAYLOAD" \
+  --data-binary @- \
   "$URL" >/dev/null
-
