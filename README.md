@@ -1,40 +1,72 @@
 # invoke-codex-from-claude
 
-Minimal wrapper to let Claude invoke Codex in a forked terminal/process and get a machine-readable run summary.
+Minimal wrapper that runs `codex exec --cd <repo> <task>` in a forked shell and emits structured summaries for Claude hooks.
 
-## Files
-- `scripts/run_codex_task.sh`: runs Codex, captures log/timing/exit code, writes meta JSON, emits summary JSON.
-- `scripts/parse_codex_run.py`: parses raw log + meta into normalized JSON (token usage, cost hints, elapsed, status).
-- `examples/claude_hook_example.sh`: example caller script suitable for a Claude hook/integration.
-
-## Quick start
+## Quick run
 ```bash
-cd /lump/apps/invoke-codex-from-claude
+git clone <your-repo-url>
+cd invoke-codex-from-claude
 scripts/run_codex_task.sh \
-  --repo /lump/apps/some-repo \
+  --repo /path/to/your/repo \
   --task "Implement feature X and run tests"
 ```
 
-Optional extra Codex args:
+With push notifications (no polling):
 ```bash
 scripts/run_codex_task.sh \
-  --repo /lump/apps/some-repo \
-  --task "Fix lint and tests" \
-  -- --model gpt-5-codex
+  --repo /path/to/your/repo \
+  --task "Implement feature X and run tests" \
+  --notify-cmd "scripts/notify_claude_hook.sh --url https://<callback-endpoint>"
 ```
 
-## Output contract
-The wrapper prints key-value lines and a JSON payload:
-- `codex_run_id`
-- `codex_exit_code`
-- `elapsed_seconds`
-- `log_file`
-- `meta_file`
-- `summary_file`
-- `summary_json={...}`
+Terminal Claude local notification:
+```bash
+scripts/run_codex_task.sh \
+  --repo /path/to/your/repo \
+  --task "Implement feature X and run tests" \
+  --notify-cmd "scripts/notify_terminal.sh"
+```
 
-This is intentionally easy for Claude hooks to parse.
+## Install (Claude Skill)
+Install the skill into a project or user scope:
+```bash
+./install.sh --scope project
+./install.sh --scope user
+```
 
-## Notes
-- Token/cost extraction is best-effort and depends on what Codex prints in logs.
-- The wrapper exits with Codex's exit code.
+Uninstall:
+```bash
+./install.sh --scope project --uninstall
+./install.sh --scope user --uninstall
+```
+
+## Logging
+Log verbosity defaults to `low`. To increase it:
+```bash
+scripts/run_codex_task.sh --repo /path/to/your/repo --task "..." -v
+scripts/run_codex_task.sh --repo /path/to/your/repo --task "..." -vv
+scripts/run_codex_task.sh --repo /path/to/your/repo --task "..." -vvv
+```
+
+Pass extra Codex arguments after a `--`:
+```bash
+scripts/run_codex_task.sh ... -- --model gpt-5-codex
+```
+
+## Tests
+```bash
+tests/test_runner_and_parser.sh
+```
+
+## Output
+Each run prints `codex_run_id`, `codex_exit_code`, `elapsed_seconds`, `log_file`, `meta_file`, `summary_file`, plus `summary_json={…}` for easy parsing. Log verbosity defaults to `low` and can be raised with `-v`, `-vv`, or `-vvv`.
+
+## Event Notifications
+`run_codex_task.sh` can emit status events:
+- `--notify-cmd "<shell command>"` sends each event JSON object to the command on stdin
+- `--event-stream <path>` appends JSONL events for local tracking
+
+Helper script:
+```bash
+echo '{"event":"ping"}' | scripts/notify_claude_hook.sh --url https://<callback-endpoint>
+```
