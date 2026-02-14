@@ -4,10 +4,10 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  install.sh --scope <user|global> [--uninstall]
+  install.sh --scope <project|user|global> [--uninstall]
 
 Options:
-  --scope <user|global>    Install scope (required)
+  --scope <project|user|global> Install scope (required)
   --uninstall             Remove the skill instead of installing
   -h, --help              Show this help text
 USAGE
@@ -56,11 +56,14 @@ if [[ -z "$SCOPE" ]]; then
 fi
 
 case "$SCOPE" in
+  project)
+    DEST_CLAUDE_ROOT="$SCRIPT_DIR/.claude"
+    ;;
   user|global)
     DEST_CLAUDE_ROOT="$HOME/.claude"
     ;;
   *)
-    echo "Error: --scope must be user or global." >&2
+    echo "Error: --scope must be project, user, or global." >&2
     exit 2
     ;;
 esac
