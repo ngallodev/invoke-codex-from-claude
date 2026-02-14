@@ -13,6 +13,6 @@
   "total_cost_usd": 0,
   "duration_sec": 0,
   "status": "success",
-  "failure_class": "execution",
+  "failure_class": null,
   "retry_count": 0
 }

@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--claude-tokens-output", type=int, default=0)
     parser.add_argument("--total-cost-usd", type=float)
     parser.add_argument("--status", choices=["success", "partial", "failure"])
-    parser.add_argument("--failure-class", choices=["environment", "spec", "execution"], default="execution")
+    parser.add_argument("--failure-class", choices=["environment", "spec", "execution"], default=None)
     parser.add_argument("--retry-count", type=int, default=0)
     return parser.parse_args()
 
@@ -79,7 +79,7 @@ def main() -> int:
         "total_cost_usd": total_cost_usd,
         "duration_sec": elapsed_seconds,
         "status": status,
-        "failure_class": args.failure_class,
+        "failure_class": args.failure_class if status != "success" else None,
         "retry_count": args.retry_count,
     }
 
