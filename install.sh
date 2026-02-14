@@ -18,6 +18,15 @@ SKILL_SRC="$SCRIPT_DIR/.claude/skills/codex-job"
 SCOPE=""
 UNINSTALL=0
 
+SCRIPT_FILES=(
+  "invoke_codex_with_review.sh"
+  "run_codex_task.sh"
+  "parse_codex_run.py"
+  "notify_claude_hook.sh"
+  "notify_terminal.sh"
+  "verify_codex_work.sh"
+)
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --scope)
@@ -48,10 +57,10 @@ fi
 
 case "$SCOPE" in
   project)
-    DEST_ROOT="$SCRIPT_DIR/.claude/skills"
+    DEST_CLAUDE_ROOT="$SCRIPT_DIR/.claude"
     ;;
   user)
-    DEST_ROOT="$HOME/.claude/skills"
+    DEST_CLAUDE_ROOT="$HOME/.claude"
     ;;
   *)
     echo "Error: --scope must be project or user." >&2
@@ -64,21 +73,45 @@ if [[ ! -d "$SKILL_SRC" ]]; then
   exit 2
 fi
 
-DEST="$DEST_ROOT/$(basename "$SKILL_SRC")"
+DEST_SKILLS_ROOT="$DEST_CLAUDE_ROOT/skills"
+DEST_SCRIPTS_ROOT="$DEST_CLAUDE_ROOT/scripts"
+DEST_SKILL="$DEST_SKILLS_ROOT/$(basename "$SKILL_SRC")"
 
 if [[ "$UNINSTALL" -eq 1 ]]; then
-  if [[ -d "$DEST" ]]; then
-    rm -rf "$DEST"
-    echo "Removed: $DEST"
+  if [[ -d "$DEST_SKILL" ]]; then
+    rm -rf "$DEST_SKILL"
+    echo "Removed skill: $DEST_SKILL"
   else
-    echo "Not installed: $DEST"
+    echo "Skill not installed: $DEST_SKILL"
   fi
+
+  for script_name in "${SCRIPT_FILES[@]}"; do
+    target="$DEST_SCRIPTS_ROOT/$script_name"
+    if [[ -f "$target" ]]; then
+      rm -f "$target"
+      echo "Removed script: $target"
+    fi
+  done
   exit 0
 fi
 
-mkdir -p "$DEST_ROOT"
-if [[ -d "$DEST" ]]; then
-  rm -rf "$DEST"
+mkdir -p "$DEST_SKILLS_ROOT"
+mkdir -p "$DEST_SCRIPTS_ROOT"
+
+if [[ -d "$DEST_SKILL" ]]; then
+  rm -rf "$DEST_SKILL"
 fi
-cp -R "$SKILL_SRC" "$DEST"
-echo "Installed: $DEST"
+cp -R "$SKILL_SRC" "$DEST_SKILL"
+echo "Installed skill: $DEST_SKILL"
+
+for script_name in "${SCRIPT_FILES[@]}"; do
+  src="$SCRIPT_DIR/scripts/$script_name"
+  dest="$DEST_SCRIPTS_ROOT/$script_name"
+  if [[ ! -f "$src" ]]; then
+    echo "Warning: missing source script: $src" >&2
+    continue
+  fi
+  cp "$src" "$dest"
+  chmod +x "$dest"
+  echo "Installed script: $dest"
+done
