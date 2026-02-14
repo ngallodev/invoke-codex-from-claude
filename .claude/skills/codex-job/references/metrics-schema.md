@@ -2,6 +2,9 @@
 
 Write one JSON object per line to `delegation-metrics.jsonl`.
 
+Preferred writer:
+- `.claude/skills/codex-job/tools/write_delegation_metric.py`
+
 Required fields:
 - `timestamp`
 - `repo`

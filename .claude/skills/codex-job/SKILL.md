@@ -32,6 +32,7 @@ Use `/codex-job` to offload implementation-ready tasks to Codex while minimizing
 3. Launch Codex with `scripts/invoke_codex_with_review.sh` and prefer `--notify-cmd`.
 4. Read summary JSON on completion; verify if risk/impact requires it.
 5. If additional fixes are needed, resume with `--resume <session_id>`.
+6. Append metrics using `tools/write_delegation_metric.py`.
 
 ## Required Tracking
 

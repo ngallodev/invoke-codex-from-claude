@@ -26,6 +26,18 @@ scripts/run_codex_task.sh \
 jq '{session_id, exit_code, success, token_usage}' runs/codex-run-<run_id>.summary.json
 ```
 
+## Append Delegation Metrics
+
+```bash
+.claude/skills/codex-job/tools/write_delegation_metric.py \
+  --summary runs/codex-run-<run_id>.summary.json \
+  --out delegation-metrics.jsonl \
+  --task-type feature \
+  --risk medium \
+  --claude-model sonnet \
+  --codex-model gpt-5.1-codex-max
+```
+
 ## Optional Verification
 
 ```bash
