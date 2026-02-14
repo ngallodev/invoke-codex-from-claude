@@ -11,9 +11,11 @@ def parse_int(text: str) -> int | None:
     return int(cleaned) if cleaned else None
 
 
-def first_float(text: str) -> float | None:
-    m = re.search(r"([0-9]+(?:\.[0-9]+)?)", text)
-    return float(m.group(1)) if m else None
+def parse_float(text: str) -> float | None:
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -65,12 +67,22 @@ def extract_token_usage(log_text: str) -> dict[str, Any]:
 
 
 def extract_cost(log_text: str) -> dict[str, Any]:
-    lines = log_text.splitlines()
-    for line in reversed(lines):
-        if re.search(r"cost|price|usd|\$", line, flags=re.IGNORECASE):
-            usd = first_float(line.replace(",", ""))
-            if usd is not None:
-                return {"usd": usd, "evidence": line.strip()}
+    # Only accept lines that look like explicit cost fields, not arbitrary prose containing "$".
+    cost_patterns = [
+        r"\bcost(?:_usd)?\s*[:=]\s*\$?\s*([0-9]+(?:\.[0-9]+)?)",
+        r"\busd\s*[:=]\s*\$?\s*([0-9]+(?:\.[0-9]+)?)",
+        r"\btotal\s+cost\b\s*[:=]\s*\$?\s*([0-9]+(?:\.[0-9]+)?)",
+    ]
+
+    for line in reversed(log_text.splitlines()):
+        stripped = line.strip()
+        for pat in cost_patterns:
+            match = re.search(pat, stripped, flags=re.IGNORECASE)
+            if match:
+                usd = parse_float(match.group(1))
+                if usd is not None:
+                    return {"usd": usd, "evidence": stripped}
+
     return {"usd": None, "evidence": None}
 
 
