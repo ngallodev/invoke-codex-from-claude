@@ -4,10 +4,10 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  install.sh --scope <project|user> [--uninstall]
+  install.sh --scope <project|user|global> [--uninstall]
 
 Options:
-  --scope <project|user>  Install scope (required)
+  --scope <project|user|global> Install scope (required)
   --uninstall             Remove the skill instead of installing
   -h, --help              Show this help text
 USAGE
@@ -59,11 +59,11 @@ case "$SCOPE" in
   project)
     DEST_CLAUDE_ROOT="$SCRIPT_DIR/.claude"
     ;;
-  user)
+  user|global)
     DEST_CLAUDE_ROOT="$HOME/.claude"
     ;;
   *)
-    echo "Error: --scope must be project or user." >&2
+    echo "Error: --scope must be project, user, or global." >&2
     exit 2
     ;;
 esac
@@ -74,7 +74,7 @@ if [[ ! -d "$SKILL_SRC" ]]; then
 fi
 
 DEST_SKILLS_ROOT="$DEST_CLAUDE_ROOT/skills"
-DEST_SCRIPTS_ROOT="$DEST_CLAUDE_ROOT/scripts"
+DEST_SCRIPTS_ROOT="$DEST_CLAUDE_ROOT/scripts"  # legacy cleanup path only
 DEST_SKILL="$DEST_SKILLS_ROOT/$(basename "$SKILL_SRC")"
 
 if [[ "$UNINSTALL" -eq 1 ]]; then
@@ -85,18 +85,18 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
     echo "Skill not installed: $DEST_SKILL"
   fi
 
+  # Clean legacy root-level runtime scripts from older installs.
   for script_name in "${SCRIPT_FILES[@]}"; do
     target="$DEST_SCRIPTS_ROOT/$script_name"
     if [[ -f "$target" ]]; then
       rm -f "$target"
-      echo "Removed script: $target"
+      echo "Removed legacy root script: $target"
     fi
   done
   exit 0
 fi
 
 mkdir -p "$DEST_SKILLS_ROOT"
-mkdir -p "$DEST_SCRIPTS_ROOT"
 
 if [[ -d "$DEST_SKILL" ]]; then
   rm -rf "$DEST_SKILL"
@@ -104,14 +104,20 @@ fi
 cp -R "$SKILL_SRC" "$DEST_SKILL"
 echo "Installed skill: $DEST_SKILL"
 
+# Canonical runtime location: skill-local scripts directory.
+DEST_SKILL_SCRIPTS_DIR="$DEST_SKILL/scripts"
+mkdir -p "$DEST_SKILL_SCRIPTS_DIR"
+
 for script_name in "${SCRIPT_FILES[@]}"; do
   src="$SCRIPT_DIR/scripts/$script_name"
-  dest="$DEST_SCRIPTS_ROOT/$script_name"
+  dest_skill="$DEST_SKILL_SCRIPTS_DIR/$script_name"
+
   if [[ ! -f "$src" ]]; then
     echo "Warning: missing source script: $src" >&2
     continue
   fi
-  cp "$src" "$dest"
-  chmod +x "$dest"
-  echo "Installed script: $dest"
+
+  cp "$src" "$dest_skill"
+  chmod +x "$dest_skill"
+  echo "Installed skill-local script: $dest_skill"
 done
