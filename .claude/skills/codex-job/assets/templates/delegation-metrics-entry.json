@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-02-14T00:00:00Z",
+  "repo": "/path/to/repo",
+  "task_type": "feature|bugfix|refactor|tests|docs",
+  "risk": "low|medium|high",
+  "delegated": true,
+  "reason_if_not_delegated": "",
+  "claude_model": "sonnet",
+  "codex_model": "gpt-5.1-codex-max",
+  "claude_tokens_input": 0,
+  "claude_tokens_output": 0,
+  "codex_tokens": 0,
+  "total_cost_usd": 0,
+  "duration_sec": 0,
+  "status": "success",
+  "failure_class": "execution",
+  "retry_count": 0
+}
