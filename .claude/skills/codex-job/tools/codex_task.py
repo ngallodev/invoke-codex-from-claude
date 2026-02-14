@@ -20,6 +20,8 @@ def _auto_write_delegation_metric(
 ) -> str | None:
     """Append delegation metrics automatically when summary output exists."""
     summary_path = Path(summary_file)
+    if not summary_path.is_absolute():
+        summary_path = repo_root / summary_path
     if not summary_path.exists():
         return "summary_missing"
 
@@ -76,6 +78,22 @@ def _auto_write_delegation_metric(
     return None
 
 
+def _resolve_runtime_paths(tool_file: Path) -> tuple[Path, Path]:
+    """Resolve runtime script directory, preferring ~/.claude/scripts then skill-local scripts."""
+    repo_root = tool_file.parent.parent.parent.parent.parent
+    root_scripts = repo_root / "scripts"
+    skill_root = tool_file.parent.parent
+    skill_scripts = skill_root / "scripts"
+
+    wrapper_name = "invoke_codex_with_review.sh"
+    if (root_scripts / wrapper_name).exists():
+        return repo_root, root_scripts
+    if (skill_scripts / wrapper_name).exists():
+        return repo_root, skill_scripts
+
+    return repo_root, root_scripts
+
+
 def codex_task(
     repo: str,
     task: str,
@@ -96,12 +114,8 @@ def codex_task(
     Returns:
         dict with run_id, log_file, meta_file, session_id (when available)
     """
-    # Resolve paths
-    # From: .claude/skills/codex-job/tools/codex_task.py
-    # To: scripts/invoke_codex_with_review.sh
     tool_file = Path(__file__).resolve()
-    repo_root = tool_file.parent.parent.parent.parent.parent  # tools -> codex -> skills -> .claude -> repo root
-    script_dir = repo_root / "scripts"
+    repo_root, script_dir = _resolve_runtime_paths(tool_file)
     wrapper = script_dir / "invoke_codex_with_review.sh"
 
     if not wrapper.exists():
@@ -110,7 +124,6 @@ def codex_task(
             "success": False,
         }
 
-    # Build command
     cmd = [
         str(wrapper),
         "--repo", repo,
@@ -124,16 +137,14 @@ def codex_task(
     ])
 
     try:
-        # Execute wrapper and parse structured output.
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
-            cwd=script_dir.parent,
+            cwd=repo_root,
         )
 
-        # Parse output
         output_lines = result.stdout.split("\n")
         response = {"raw_output": result.stdout}
 
@@ -146,7 +157,6 @@ def codex_task(
                 if key in ["codex_run_id", "codex_session_id", "log_file", "meta_file", "summary_file", "codex_exit_code"]:
                     response[key] = value
 
-        # Parse summary JSON if available
         if "summary_json=" in result.stdout:
             try:
                 summary_start = result.stdout.index("summary_json=") + len("summary_json=")

@@ -104,14 +104,27 @@ fi
 cp -R "$SKILL_SRC" "$DEST_SKILL"
 echo "Installed skill: $DEST_SKILL"
 
+# Keep scripts available in both places:
+# 1) ~/.claude/scripts (current runtime path)
+# 2) ~/.claude/skills/codex-job/scripts (self-contained skill install)
+DEST_SKILL_SCRIPTS_DIR="$DEST_SKILL/scripts"
+mkdir -p "$DEST_SKILL_SCRIPTS_DIR"
+
 for script_name in "${SCRIPT_FILES[@]}"; do
   src="$SCRIPT_DIR/scripts/$script_name"
-  dest="$DEST_SCRIPTS_ROOT/$script_name"
+  dest_root="$DEST_SCRIPTS_ROOT/$script_name"
+  dest_skill="$DEST_SKILL_SCRIPTS_DIR/$script_name"
+
   if [[ ! -f "$src" ]]; then
     echo "Warning: missing source script: $src" >&2
     continue
   fi
-  cp "$src" "$dest"
-  chmod +x "$dest"
-  echo "Installed script: $dest"
+
+  cp "$src" "$dest_root"
+  chmod +x "$dest_root"
+  echo "Installed script: $dest_root"
+
+  cp "$src" "$dest_skill"
+  chmod +x "$dest_skill"
+  echo "Installed skill-local script: $dest_skill"
 done
