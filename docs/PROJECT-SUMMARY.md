@@ -64,22 +64,24 @@ Created a complete fire-and-forget Codex invocation system with smart failure de
 
 ```
 invoke-codex-from-claude/
-├── scripts/
-│   ├── run_codex_task.sh              # Core wrapper
-│   ├── invoke_codex_with_review.sh    # Smart detection
-│   ├── verify_codex_work.sh           # Independent verification
-│   └── parse_codex_run.py             # Log parser
-├── .claude/
-│   ├── CLAUDE.md                      # Usage guide
-│   └── skills/
-│       └── codex/
-│           ├── SKILL.md               # Skill documentation
-│           └── tools/
-│               └── codex_task.py      # Python tool
-├── runs/                              # Execution logs/metadata
-├── FAILURE-ANALYSIS.md                # Exit code investigation
-├── E2E-TEST-RESULTS.md                # Test validation
-└── PROJECT-SUMMARY.md                 # This file
+├── codex-job/                        # Unified skill source (scripts + skill definition)
+│   ├── SKILL.md                      # Codex skill definition
+│   ├── scripts/                      # Shell scripts and Python tools
+│   │   ├── run_codex_task.sh
+│   │   ├── run_gemini_task.sh
+│   │   ├── invoke_codex_with_review.sh
+│   │   ├── codex_task.py
+│   │   ├── write_delegation_metric.py
+│   │   └── parse_codex_run.py
+│   ├── references/                   # Reference documentation
+│   └── assets/templates/             # JSONL templates
+├── tests/                            # Test suite
+├── docs/                             # Project documentation
+└── deprecated/                       # Archived/unused files
+
+~/.claude/skills/codex-job/           # After: cp -R codex-job ~/.claude/skills/codex-job
+├── SKILL.md
+└── scripts/
 ```
 
 ## 🚀 How to Use
@@ -87,20 +89,20 @@ invoke-codex-from-claude/
 ### Basic Invocation (from Claude)
 ```javascript
 Bash({
-  command: "scripts/invoke_codex_with_review.sh --repo /path --task 'description' -- --model gpt-5.1-codex-mini",
+  command: "codex-job/scripts/invoke_codex_with_review.sh --repo /path --task 'description' -- --model gpt-5.1-codex-mini",
   run_in_background: true
 })
 ```
 
 ### Using the Skill
 ```
-/codex <task_description>
+/codex-job <task_description>
 ```
 
 ### Resume Session
 ```javascript
 Bash({
-  command: "scripts/run_codex_task.sh --repo /path --resume <session_id> --task 'continue work'",
+  command: "codex-job/scripts/run_codex_task.sh --repo /path --resume <session_id> --task 'continue work'",
   run_in_background: true
 })
 ```

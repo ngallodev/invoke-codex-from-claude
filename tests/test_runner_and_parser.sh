@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-RUNNER="$ROOT_DIR/scripts/run_codex_task.sh"
+RUNNER="$ROOT_DIR/codex-job/scripts/run_codex_task.sh"
 
 fail() {
   echo "[FAIL] $*" >&2
@@ -232,7 +232,7 @@ EOF
 }
 EOF
 
-  python3 scripts/parse_codex_run.py --log "$log" --meta "$meta" > "$summary"
+  python3 "$ROOT_DIR/codex-job/scripts/parse_codex_run.py" --log "$log" --meta "$meta" > "$summary"
 
   assert_eq "7200" "$(json_get "$summary" token_usage.total_tokens)" "tokens used total"
   assert_eq "null" "$(json_get "$summary" token_usage.input_tokens)" "input tokens null"

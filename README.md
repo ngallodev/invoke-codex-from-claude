@@ -1,61 +1,44 @@
 # invoke-codex-from-claude
 
-Minimal wrapper that runs `codex exec --cd <repo> <task>` in a forked shell and emits structured summaries for Claude hooks.
+Minimal wrapper that runs `codex` or `gemini` (and other LLMs) in a forked shell and emits structured summaries for Claude hooks.
 
-## Quick run
+All scripts and skill source files live under `codex-job/` at the repo root.
+
+## Quick run (Codex)
 ```bash
-git clone <your-repo-url>
-cd invoke-codex-from-claude
-scripts/run_codex_task.sh \
-  --repo /path/to/your/repo \
-  --task "Implement feature X and run tests"
+codex-job/scripts/run_codex_task.sh --repo . --task "Fix feature X"
 ```
 
-With push notifications (no polling):
+## Quick run (Gemini)
 ```bash
-scripts/run_codex_task.sh \
-  --repo /path/to/your/repo \
-  --task "Implement feature X and run tests" \
-  --notify-cmd "scripts/notify_claude_hook.sh --url https://<callback-endpoint>"
+codex-job/scripts/run_gemini_task.sh --repo . --task "Fix feature X"
 ```
 
-Terminal Claude local notification:
+## Deploy Skill to `~/.claude/skills/`
 ```bash
-scripts/run_codex_task.sh \
-  --repo /path/to/your/repo \
-  --task "Implement feature X and run tests" \
-  --notify-cmd "scripts/notify_terminal.sh"
+rm -rf ~/.claude/skills/codex-job
+cp -R codex-job ~/.claude/skills/codex-job
 ```
 
-## Install (Claude Skill)
-Install the skill into a project or user scope:
-```bash
-./install.sh --scope project
-./install.sh --scope user
-```
-
-Uninstall:
-```bash
-./install.sh --scope project --uninstall
-./install.sh --scope user --uninstall
-```
+Scripts are installed to `~/.claude/skills/codex-job/scripts/`. The skill includes templates, tools, and reference documentation.
 
 ## Logging
 Log verbosity defaults to `low`. To increase it:
 ```bash
-scripts/run_codex_task.sh --repo /path/to/your/repo --task "..." -v
-scripts/run_codex_task.sh --repo /path/to/your/repo --task "..." -vv
-scripts/run_codex_task.sh --repo /path/to/your/repo --task "..." -vvv
+codex-job/scripts/run_codex_task.sh ... -v
+codex-job/scripts/run_codex_task.sh ... -vv
+codex-job/scripts/run_codex_task.sh ... -vvv
 ```
 
-Pass extra Codex arguments after a `--`:
+Pass extra arguments after a `--`:
 ```bash
-scripts/run_codex_task.sh ... -- --model gpt-5-codex
+codex-job/scripts/run_gemini_task.sh ... -- --model gemini-2.0-flash
 ```
 
 ## Tests
 ```bash
 tests/test_runner_and_parser.sh
+tests/test_gemini_runner_and_parser.sh
 ```
 
 ## Output
@@ -68,5 +51,5 @@ Each run prints `codex_run_id`, `codex_exit_code`, `elapsed_seconds`, `log_file`
 
 Helper script:
 ```bash
-echo '{"event":"ping"}' | scripts/notify_claude_hook.sh --url https://<callback-endpoint>
+echo '{"event":"ping"}' | codex-job/scripts/notify_claude_hook.sh --url https://<callback-endpoint>
 ```

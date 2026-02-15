@@ -1,0 +1,6 @@
+Starting codex...
+prompt_tokens: 12,345
+completion_tokens: 678
+total_tokens: 13,023
+estimated_cost_usd: 0.42
+Done.
