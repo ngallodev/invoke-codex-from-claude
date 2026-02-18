@@ -19,29 +19,26 @@ require_env_var() {
 usage() {
   cat <<'USAGE'
 Usage:
-  install.sh --scope <project|user|global> [options]
+  uninstall.sh --scope <project|user|global> [options]
 
 Options:
-  --scope <project|user|global>  Install scope (required)
+  --scope <project|user|global>  Install scope to remove (required)
   --claude-home <path>           Override target Claude home (~/.claude)
-  --profile <path>               Shell profile to update (default: auto-detect)
-  --no-profile                   Skip PATH/profile edits
-  --include-experimental         Install deferred Phase 2/3 runtime scripts (queue/dashboard)
+  --profile <path>               Shell profile to clean (default: auto-detect)
+  --no-profile                   Skip PATH/profile cleanup
   --dry-run                      Show actions without changing files
   -h, --help                     Show this help text
 
 Examples:
-  install.sh --scope user
-  install.sh --scope user --dry-run
-  install.sh --scope user --profile ~/.bashrc
-  install.sh --scope project --no-profile
+  uninstall.sh --scope user
+  uninstall.sh --scope user --dry-run
+  uninstall.sh --scope project --no-profile
 USAGE
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_SRC="$SCRIPT_DIR/.claude/skills/codex-job"
-SCRIPT_SRC_DIR="$SCRIPT_DIR/codex-job/scripts"
-CORE_SCRIPT_FILES=(
+SKILL_NAME="codex-job"
+SCRIPT_FILES=(
   "codex_task.py"
   "invoke_codex_with_review.sh"
   "invoke_gemini_with_review.sh"
@@ -49,23 +46,19 @@ CORE_SCRIPT_FILES=(
   "run_gemini_task.sh"
   "parse_codex_run.py"
   "parse_gemini_run.py"
+  "job_queue.py"
+  "job_queue_server.py"
   "notify_claude_hook.sh"
   "notify_terminal.sh"
   "verify_codex_work.sh"
   "write_delegation_metric.py"
 )
-EXPERIMENTAL_SCRIPT_FILES=(
-  "job_queue.py"
-  "job_queue_server.py"
-)
-SCRIPT_FILES=("${CORE_SCRIPT_FILES[@]}")
 
 SCOPE=""
 DRY_RUN=0
 CLAUDE_HOME_OVERRIDE=""
 PROFILE_OVERRIDE=""
 NO_PROFILE=0
-INCLUDE_EXPERIMENTAL=0
 
 PROFILE_START="# >>> codex-job path (invoke-codex-from-claude)"
 PROFILE_END="# <<< codex-job path (invoke-codex-from-claude)"
@@ -86,10 +79,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-profile)
       NO_PROFILE=1
-      shift
-      ;;
-    --include-experimental)
-      INCLUDE_EXPERIMENTAL=1
       shift
       ;;
     --dry-run)
@@ -115,7 +104,7 @@ if [[ -z "$SCOPE" ]]; then
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "Error: python3 is required for installation." >&2
+  echo "Error: python3 is required for uninstallation." >&2
   exit 127
 fi
 
@@ -133,11 +122,6 @@ case "$SCOPE" in
     ;;
 esac
 
-if [[ ! -d "$SKILL_SRC" ]]; then
-  echo "Error: skill source not found: $SKILL_SRC" >&2
-  exit 2
-fi
-
 abs_path() {
   python3 - "$1" <<'PY'
 import sys
@@ -149,7 +133,7 @@ PY
 
 DEST_CLAUDE_ROOT="$(abs_path "$DEST_CLAUDE_ROOT")"
 DEST_SKILLS_ROOT="$DEST_CLAUDE_ROOT/skills"
-DEST_SKILL="$DEST_SKILLS_ROOT/$(basename "$SKILL_SRC")"
+DEST_SKILL="$DEST_SKILLS_ROOT/$SKILL_NAME"
 DEST_SKILL_SCRIPTS="$DEST_SKILL/scripts"
 LEGACY_SCRIPTS_ROOT="$DEST_CLAUDE_ROOT/scripts"
 
@@ -162,79 +146,47 @@ log_step() {
   fi
 }
 
-ensure_dir() {
-  local dir="$1"
-  log_step "Ensure directory $dir"
-  [[ "$DRY_RUN" -eq 1 ]] || mkdir -p "$dir"
-}
-
-sync_skill_tree() {
-  if command -v rsync >/dev/null 2>&1; then
-    log_step "Sync skill tree to $DEST_SKILL (rsync --delete)"
-    if [[ "$DRY_RUN" -ne 1 ]]; then
-      mkdir -p "$DEST_SKILLS_ROOT"
-      rsync -a --delete "$SKILL_SRC/" "$DEST_SKILL/"
+remove_path() {
+  local target="$1"
+  if [[ -e "$target" ]]; then
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      log_step "Remove $target"
+    else
+      rm -rf "$target"
+      log_step "Removed $target"
     fi
   else
-    log_step "Copy skill tree to $DEST_SKILL (cp -a)"
-    if [[ "$DRY_RUN" -ne 1 ]]; then
-      mkdir -p "$DEST_SKILLS_ROOT"
-      rm -rf "$DEST_SKILL"
-      cp -a "$SKILL_SRC" "$DEST_SKILL"
-    fi
+    log_step "Already absent: $target"
   fi
 }
 
-sync_runtime_scripts() {
-  ensure_dir "$DEST_SKILL_SCRIPTS"
-
-  local name
-  for name in "${SCRIPT_FILES[@]}"; do
-    local src="$SCRIPT_SRC_DIR/$name"
-    if [[ ! -f "$src" ]]; then
-      log_step "Skip missing source $src"
-      continue
-    fi
-    local dest="$DEST_SKILL_SCRIPTS/$name"
-    if [[ "$DRY_RUN" -eq 1 ]]; then
-      log_step "Copy $src -> $dest"
-    else
-      cp "$src" "$dest"
-      chmod +x "$dest"
-      log_step "Installed script $dest"
-    fi
-  done
-}
-
-update_profile_block() {
+clean_profile_block() {
   local profile_path="$1"
-  local path_entry="$2"
 
   if [[ "$NO_PROFILE" -eq 1 ]]; then
-    log_step "Skipping profile update (disabled)"
+    log_step "Skipping profile cleanup (disabled)"
     return
   fi
 
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    log_step "Ensure PATH entry for $path_entry in $profile_path"
+    log_step "Remove PATH block from $profile_path if present"
     return
   fi
 
-  local stamp
-  stamp="# Added by invoke-codex-from-claude install.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-  python3 - "$profile_path" "$PROFILE_START" "$PROFILE_END" "$stamp" "$path_entry" <<'PY'
+  python3 - "$profile_path" "$PROFILE_START" "$PROFILE_END" <<'PY'
 import sys
 from pathlib import Path
 
 profile = Path(sys.argv[1])
-start, end, stamp, path_entry = sys.argv[2:6]
-export_line = f'export PATH="{path_entry}:$PATH"'
+start, end = sys.argv[2:4]
 
-text = profile.read_text() if profile.exists() else ""
+if not profile.exists():
+    sys.exit(0)
+
+lines = profile.read_text().splitlines()
 out = []
 skipping = False
-for line in text.splitlines():
+for line in lines:
     if line.strip() == start:
         skipping = True
         continue
@@ -244,14 +196,13 @@ for line in text.splitlines():
     if not skipping:
         out.append(line)
 
-if out and out[-1].strip():
-    out.append("")
+# Trim trailing blank lines
+while out and not out[-1].strip():
+    out.pop()
 
-out.extend([start, stamp, export_line, end])
-profile.parent.mkdir(parents=True, exist_ok=True)
-profile.write_text("\n".join(out) + "\n")
+profile.write_text("\n".join(out) + ("\n" if out else ""))
 PY
-  log_step "Updated PATH block in $profile_path"
+  log_step "Cleaned PATH block in $profile_path"
 }
 
 detect_profile_path() {
@@ -280,32 +231,24 @@ detect_profile_path() {
 
 log_step "Scope: $SCOPE"
 log_step "Claude root: $DEST_CLAUDE_ROOT"
-if [[ "$INCLUDE_EXPERIMENTAL" -eq 1 ]]; then
-  SCRIPT_FILES+=("${EXPERIMENTAL_SCRIPT_FILES[@]}")
-  log_step "Including experimental scripts (Phase 2/3 deferred features)"
-fi
 
-sync_skill_tree
-sync_runtime_scripts
+remove_path "$DEST_SKILL"
+
+# Legacy script cleanup (pre-skill layout)
+if [[ -d "$LEGACY_SCRIPTS_ROOT" ]]; then
+  for name in "${SCRIPT_FILES[@]}"; do
+    legacy="$LEGACY_SCRIPTS_ROOT/$name"
+    if [[ -f "$legacy" ]]; then
+      remove_path "$legacy"
+    fi
+  done
+fi
 
 PROFILE_PATH="$(detect_profile_path)"
 if [[ -n "${PROFILE_PATH:-}" ]]; then
-  update_profile_block "$PROFILE_PATH" "$DEST_SKILL_SCRIPTS"
+  clean_profile_block "$PROFILE_PATH"
 else
-  log_step "No profile updated (project scope or not provided)"
+  log_step "No profile cleaned (project scope or not provided)"
 fi
 
-# Clean legacy root-level runtime scripts from older installs.
-for name in "${SCRIPT_FILES[@]}"; do
-  legacy="$LEGACY_SCRIPTS_ROOT/$name"
-  if [[ -f "$legacy" ]]; then
-    if [[ "$DRY_RUN" -eq 1 ]]; then
-      log_step "Remove legacy script $legacy"
-    else
-      rm -f "$legacy"
-      log_step "Removed legacy script $legacy"
-    fi
-  fi
-done
-
-log_step "Install completed"
+log_step "Uninstall completed"

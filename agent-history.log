@@ -1,0 +1,18 @@
+[C2 bash-error-handling-specialist] 2026-02-18: Starting error-handling/timeouts work on run_codex_task.sh; coordinating with C1 (secrets) to avoid conflicts.
+[C1 security-hardener] Starting secrets management task for run_codex_task.sh.
+- Noted missing instruction file .claude/agents/team/phase1-shield.md referenced in plan; proceeding with available guidance.
+- Will coordinate with C2/L1-L3 requirements per go-live plan.
+[C1 security-hardener] Implemented env validation in codex-job/scripts/run_codex_task.sh.
+- Added umask 077 and helper functions require_env_var/require_any_env_var.
+- Enforce CODEX_API_KEY presence before Codex invocation.
+- When --notify-cmd is set, require CODEX_WEBHOOK_SECRET or WEBHOOK_SECRET for signing readiness.
+[C3 test-generator-shell] 2026-02-18: Added bats coverage for run_codex_task.sh (long-run elapsed, special task names, network failure notifications) and ensured metadata/assertions align with C1/C2 changes.
+
+[C5 technical-writer] 2026-02-18: README refreshed (prereqs, end-to-end example, env vars, dry-run/testing/troubleshooting) and CONTRIBUTING.md added with standards/tests; noted install-engineer dry-run plan and json-minimizer schema coordination.[C4 installation-engineer] 2026-02-18: Added idempotent install/uninstall with --dry-run, profile block cleanup, and dry-run test. Updated README usage.
+[C2 bash-error-handling-specialist] 2026-02-18: Added timeout/traps/summary guarantees in run_codex_task.sh; respected C1 env validation (no secret changes).
+[L1 caching-architect] 2026-02-18: Added content-hash cache with 24h TTL (--no-cache), store under ~/.cache/codex-job with writable fallback; tests/test_runner_and_parser.sh run with dummy env.
+
+[L5 python-post-processor] 2026-02-18: Added scripts/summary_minifier.py for lean schema output and documented usage in README; aligns with json-minimizer short-key schema.[N3 webhook-signer] 2026-02-18: Added HMAC-SHA256 signing to scripts/notify_claude_hook.sh (env/flag secret, X-Signature header) and documented verification flow in README/invocation patterns.
+[2026-02-18T03:13:10.241253] self-diagnosis-creator: added --doctor diagnostics to run_codex_task.sh (root and codex-job), docs/tests updated.
+json-minimizer: compact summary schema rolled out (short keys + legacy block); updated parser, runner, docs, tests; write_delegation_metric handles new schema.
+[L3 model-tier-integrator] 2026-02-18: Added --tier mapping (low/medium/high) with model logging and override handling; updated parsers, docs, and runner tests (test_runner_and_parser.sh).

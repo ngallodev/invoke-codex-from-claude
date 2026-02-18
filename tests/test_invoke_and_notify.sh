@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNNER="$ROOT_DIR/scripts/run_codex_task.sh"
 INVOKER="$ROOT_DIR/scripts/invoke_codex_with_review.sh"
+export CODEX_API_KEY="test-key"
+export WEBHOOK_SECRET="test-secret"
 
 fail() {
   echo "[FAIL] $*" >&2
@@ -224,4 +226,3 @@ main() {
 }
 
 main "$@"
-

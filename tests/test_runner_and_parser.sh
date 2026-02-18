@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNNER="$ROOT_DIR/codex-job/scripts/run_codex_task.sh"
+export CODEX_API_KEY="test-key"
 
 fail() {
   echo "[FAIL] $*" >&2
@@ -38,10 +39,20 @@ keypath = sys.argv[2].split('.')
 with open(file_path, 'r', encoding='utf-8') as f:
     data = json.load(f)
 
-value = data
-for key in keypath:
-    if key:
-        value = value[key]
+def traverse(obj, keys):
+    value = obj
+    for key in keys:
+        if key:
+            value = value[key]
+    return value
+
+try:
+    value = traverse(data, keypath)
+except Exception:
+    if "legacy" in data:
+        value = traverse(data["legacy"], keypath)
+    else:
+        raise
 
 if isinstance(value, bool):
     print(str(value).lower())
@@ -144,6 +155,10 @@ run_test_basic() {
   log_file="$(extract_kv "$output" log_file)"
   assert_file_exists "$log_file"
 
+  local model_line
+  model_line="$(rg -n '^fake_codex_model=' "$log_file" | tail -n1 | cut -d: -f2-)"
+  assert_eq "fake_codex_model=gpt-3.5-turbo" "$model_line" "default tier model"
+
   local cd_line
   cd_line="$(rg -n '^fake_codex_cwd=' "$log_file" | tail -n1 | cut -d: -f2-)"
   assert_eq "fake_codex_cwd=$repo" "$cd_line" "exec --cd passthrough"
@@ -152,11 +167,14 @@ run_test_basic() {
   rg -n '^codex_command=' "$log_file" >/dev/null || fail "missing codex_command in log"
   rg -n 'exec --cd' "$log_file" >/dev/null || fail "missing exec --cd in diagnostic command"
 
-  assert_eq "true" "$(json_get "$summary" success)" "success"
-  assert_eq "0" "$(json_get "$summary" exit_code)" "exit_code"
-  assert_eq "1234" "$(json_get "$summary" token_usage.input_tokens)" "input_tokens"
-  assert_eq "56" "$(json_get "$summary" token_usage.output_tokens)" "output_tokens"
-  assert_eq "1290" "$(json_get "$summary" token_usage.total_tokens)" "total_tokens"
+  assert_eq "true" "$(json_get "$summary" ok)" "ok"
+  assert_eq "0" "$(json_get "$summary" exit)" "exit"
+  assert_eq "gpt-3.5-turbo" "$(json_get "$summary" mdl)" "default model selection"
+  assert_eq "low" "$(json_get "$summary" tier)" "default model tier"
+  assert_eq "tier_default" "$(json_get "$summary" msrc)" "default model source"
+  assert_eq "1234" "$(json_get "$summary" tok.in)" "tok.in"
+  assert_eq "56" "$(json_get "$summary" tok.out)" "tok.out"
+  assert_eq "1290" "$(json_get "$summary" tok.tot)" "tok.tot"
   assert_eq "0.12" "$(json_get "$summary" cost.usd)" "cost.usd"
 
   rm -rf "$tmp"
@@ -182,6 +200,7 @@ run_test_advanced_options() {
     --codex-bin "$fake_codex" \
     --log-dir "$log_dir" \
     --json-out "$summary" \
+    --tier high \
     -vvv \
     -- --model gpt-5-mini --effort low \
     > "$output"
@@ -198,13 +217,57 @@ run_test_advanced_options() {
   rg -n '^codex_command=' "$log_file" >/dev/null || fail "missing codex_command in advanced log"
   rg -n 'gpt-5-mini' "$log_file" >/dev/null || fail "missing mini model in advanced diagnostics"
 
-  assert_eq "111" "$(json_get "$summary" token_usage.input_tokens)" "input_tokens mini"
-  assert_eq "22" "$(json_get "$summary" token_usage.output_tokens)" "output_tokens mini"
-  assert_eq "133" "$(json_get "$summary" token_usage.total_tokens)" "total_tokens mini"
+  assert_eq "gpt-5-mini" "$(json_get "$summary" mdl)" "explicit model selection"
+  assert_eq "high" "$(json_get "$summary" tier)" "tier preserved on explicit model"
+  assert_eq "explicit_model" "$(json_get "$summary" msrc)" "model source explicit"
+  assert_eq "111" "$(json_get "$summary" tok.in)" "tok.in mini"
+  assert_eq "22" "$(json_get "$summary" tok.out)" "tok.out mini"
+  assert_eq "133" "$(json_get "$summary" tok.tot)" "tok.tot mini"
   assert_eq "0.01" "$(json_get "$summary" cost.usd)" "cost.usd mini"
 
   rm -rf "$tmp"
   pass "advanced options (--model gpt-5-mini) + parsed summary"
+}
+
+run_test_tier_mapping() {
+  local tmp
+  tmp="$(mktemp -d)"
+
+  local fake_codex="$tmp/fake_codex.sh"
+  local repo="$tmp/repo"
+  local log_dir="$tmp/runs"
+  local summary="$tmp/tier.summary.json"
+  local output="$tmp/tier.output.txt"
+
+  mkdir -p "$repo" "$log_dir"
+  make_fake_codex "$fake_codex"
+
+  "$RUNNER" \
+    --repo "$repo" \
+    --task "Tiered task" \
+    --codex-bin "$fake_codex" \
+    --log-dir "$log_dir" \
+    --json-out "$summary" \
+    --tier medium \
+    -vvv \
+    > "$output"
+
+  assert_file_exists "$summary"
+
+  local log_file
+  log_file="$(extract_kv "$output" log_file)"
+  assert_file_exists "$log_file"
+
+  local model_line
+  model_line="$(rg -n '^fake_codex_model=' "$log_file" | tail -n1 | cut -d: -f2-)"
+  assert_eq "fake_codex_model=gpt-4o-mini" "$model_line" "medium tier model"
+
+  assert_eq "gpt-4o-mini" "$(json_get "$summary" mdl)" "mapped model"
+  assert_eq "medium" "$(json_get "$summary" tier)" "mapped tier"
+  assert_eq "tier_flag" "$(json_get "$summary" msrc)" "model source tier"
+
+  rm -rf "$tmp"
+  pass "tier flag maps to medium model"
 }
 
 run_test_tokens_used_line() {
@@ -234,9 +297,9 @@ EOF
 
   python3 "$ROOT_DIR/codex-job/scripts/parse_codex_run.py" --log "$log" --meta "$meta" > "$summary"
 
-  assert_eq "7200" "$(json_get "$summary" token_usage.total_tokens)" "tokens used total"
-  assert_eq "null" "$(json_get "$summary" token_usage.input_tokens)" "input tokens null"
-  assert_eq "null" "$(json_get "$summary" token_usage.output_tokens)" "output tokens null"
+  assert_eq "7200" "$(json_get "$summary" tok.tot)" "tokens used total"
+  assert_eq "null" "$(json_get "$summary" tok.in)" "input tokens null"
+  assert_eq "null" "$(json_get "$summary" tok.out)" "output tokens null"
 
   rm -rf "$tmp"
   pass "tokens used format parsed as total"
@@ -245,6 +308,7 @@ EOF
 main() {
   run_test_basic
   run_test_advanced_options
+  run_test_tier_mapping
   run_test_tokens_used_line
   echo "All tests passed."
 }

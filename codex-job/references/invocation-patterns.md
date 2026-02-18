@@ -6,9 +6,11 @@
 codex-job/scripts/invoke_codex_with_review.sh \
   --repo <repo_path> \
   --task '<task_description_with_acceptance_criteria>' \
-  --notify-cmd 'scripts/notify_claude_hook.sh --url https://<callback>' \
+  --notify-cmd 'codex-job/scripts/notify_claude_hook.sh --url https://<callback> --secret "$WEBHOOK_SECRET"' \
   -- --model gpt-5.1-codex-max
 ```
+
+Webhook payloads are HMAC-SHA256 signed when `--secret`, `WEBHOOK_SECRET`, or `CODEX_WEBHOOK_SECRET` is present; the script sends `X-Signature: sha256=<hex>`.
 
 ## Resume Existing Session
 
@@ -23,7 +25,7 @@ codex-job/scripts/run_codex_task.sh \
 ## Status Check
 
 ```bash
-jq '{session_id, exit_code, success, token_usage}' runs/codex-run-<run_id>.summary.json
+jq '{sid, exit, ok, tok}' runs/codex-run-<run_id>.summary.json
 ```
 
 ## Append Delegation Metrics

@@ -37,3 +37,18 @@ Phase 1 agents should focus on stability and security. They can work independent
 Phase 2 agents can start as soon as Phase 1 is merged, or even earlier if they base their work on the same stable core. Caching (L1) depends on the error handling from C2, so that should be merged first.
 
 Phase 3 agents can begin after the core is stable, but some tasks (like N2) depend on Phase 2 features.
+
+## Optimized Multi-Agent Execution Plan (using new specialists)
+- **C1 + C2 (secrets, timeouts, JSON)**: Run `security-hardener` + `bash-error-handling-specialist` in parallel on a shared feature branch; coordinate on `run_codex_task.sh` to avoid clashes. Gate completion on updated bats tests from `test-generator-shell`.
+- **C3 (tests)**: `test-generator-shell` extends bats coverage after C1/C2 land; unblock merges only after all new tests pass locally (`tests/test_runner_and_parser.sh`, `tests/test_gemini_runner_and_parser.sh`, `tests/test_invoke_and_notify.sh`, plus new targeted cases).
+- **C4 (install/uninstall)**: `installation-engineer` works independently once env validation patterns from C1 are merged; requires a short dry-run test script to verify idempotency.
+- **C5 (docs)**: `technical-writer` can operate after C1–C4 conclusions are sketched; sync with `installation-engineer` for flags and with `json-minimizer` for schema notes.
+- **L1/L2/L3/L5**: `caching-architect`, `json-minimizer`, `model-tier-integrator`, and `python-post-processor` can proceed concurrently after C2; cache/tier changes share `run_codex_task.sh` so merge via sequential PRs or feature toggles.
+- **L4**: Start after L1–L3 stabilize; reuse hashes defined by `caching-architect`.
+- **N1–N5**: `job-queue-designer`, `webhook-signer`, `self-diagnosis-creator`, and `technical-writer` collaborate; `N2` waits on tier mapping; `N3` depends on C1 secrets; `N4` depends on env checks from C1/C2.
+- **Telemetry**: All agents must report `input_tokens`, `output_tokens`, `cached_tokens`, `context_tokens`, and `elapsed_seconds` per session to keep cost tracking uniform.
+- **Silence until done**: Agents should not stream progress; they return one final success/failure with telemetry. Any detailed notes go to `agent-history.log` in repo root.
+- **Test gating**: A task is “done” only when relevant integration/unit tests pass, including the minimal metadata check `tests/test_agents_metadata.sh` plus feature-specific bats/CLI tests each agent adds.
+
+
+Telemetry gate: set `TELEMETRY_ENABLED=1` (default) to include metrics; set to 0 to suppress. Required telemetry keys when enabled: `input_tokens`, `output_tokens`, `cached_tokens`, `context_tokens`, `elapsed_seconds`.

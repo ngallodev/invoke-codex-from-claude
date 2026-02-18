@@ -7,6 +7,7 @@ import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Mapping
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +48,15 @@ def _as_int(value: object, default: int = 0) -> int:
         return default
 
 
+def _pick(summary: Mapping[str, Any], primary: str, legacy: str | None = None, default=None):
+    if primary in summary and summary[primary] is not None:
+        return summary[primary]
+    legacy_block = summary.get("legacy") if isinstance(summary.get("legacy"), Mapping) else {}
+    if legacy and legacy_block.get(legacy) is not None:
+        return legacy_block[legacy]
+    return default
+
+
 def main() -> int:
     args = parse_args()
     summary_path = Path(args.summary)
@@ -54,24 +64,29 @@ def main() -> int:
 
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
 
-    success = bool(summary.get("success", False))
+    success = bool(_pick(summary, "ok", "success", False))
     status = args.status or ("success" if success else "failure")
 
-    usage = summary.get("token_usage", {})
-    t_in = _as_int(usage.get("input_tokens"), 0)
-    t_out = _as_int(usage.get("output_tokens"), 0)
-    t_total = _as_int(usage.get("total_tokens"), 0)
+    tok = summary.get("tok") if isinstance(summary.get("tok"), Mapping) else {}
+    legacy_tok = summary.get("legacy", {}).get("token_usage", {}) if isinstance(summary.get("legacy"), Mapping) else {}
+    usage = tok if tok else legacy_tok
+    t_in = _as_int(_pick(usage, "in", "input_tokens"), 0)
+    t_out = _as_int(_pick(usage, "out", "output_tokens"), 0)
+    t_total = _as_int(_pick(usage, "tot", "total_tokens"), 0)
 
-    elapsed_seconds = _as_number(summary.get("elapsed_seconds"), 0.0)
+    elapsed_seconds = _as_number(_pick(summary, "time", "elapsed_seconds", 0.0), 0.0)
 
-    cost_from_summary = summary.get("cost", {}).get("usd")
+    cost_block = summary.get("cost") if isinstance(summary.get("cost"), Mapping) else {}
+    if not cost_block and isinstance(summary.get("legacy"), Mapping):
+        cost_block = summary["legacy"].get("cost") or {}
+    cost_from_summary = cost_block.get("usd") if isinstance(cost_block, Mapping) else None
     total_cost_usd = _as_number(args.total_cost_usd if args.total_cost_usd is not None else cost_from_summary, 0.0)
 
-    timestamp = summary.get("ended_at") or datetime.now(timezone.utc).isoformat()
+    timestamp = _pick(summary, "end", "ended_at") or datetime.now(timezone.utc).isoformat()
 
     record = {
         "timestamp": timestamp,
-        "repo": summary.get("repo", ""),
+        "repo": _pick(summary, "repo", "repo", ""),
         "task_type": args.task_type,
         "risk": args.risk,
         "delegated": args.delegated == "true",
