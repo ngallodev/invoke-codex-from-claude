@@ -213,6 +213,10 @@ def compact_summary(*, meta: Mapping[str, Any], log_path: Path, token_usage: Map
         "tok": short_tok,
         "cost": short_cost,
         "err": None,
+        "cache": {
+            "status": meta.get("cache_status"),
+            "key": meta.get("cache_key"),
+        },
         "src": "run_codex_task.sh",
     }
 
