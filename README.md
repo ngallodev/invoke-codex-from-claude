@@ -119,6 +119,17 @@ PY
   ```
 - Exits non-zero when required checks fail; warnings (e.g., missing optional webhook secrets) do not fail the doctor run.
 
+## UI (Local-First)
+- The initial operator UI scaffold lives in `ui/`.
+- Diagnose environment: `bash scripts/ui_doctor.sh`
+- Bootstrap dependencies and smoke checks: `bash scripts/bootstrap_ui.sh`
+- Run UI locally:
+  ```bash
+  cd ui
+  npm run dev
+  ```
+- Default dev URL: `http://localhost:4173`
+
 ## Testing
 - Core agents metadata: `tests/test_agents_metadata.sh`
 - Event/schema contracts: `tests/test_contract_schemas.sh`
