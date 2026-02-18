@@ -105,6 +105,9 @@ done
 echo "fake_codex_cwd=$CWD"
 echo "fake_codex_task=$TASK"
 echo "fake_codex_model=$MODEL"
+if [[ -n "${COUNTER_FILE:-}" ]]; then
+  echo x >> "$COUNTER_FILE"
+fi
 
 if [[ "$MODEL" == "gpt-5-mini" ]]; then
   echo "prompt_tokens: 111"
@@ -305,11 +308,140 @@ EOF
   pass "tokens used format parsed as total"
 }
 
+run_test_cache_hit() {
+  local tmp
+  tmp="$(mktemp -d)"
+
+  local fake_codex="$tmp/fake_codex.sh"
+  local repo="$tmp/repo"
+  local log_dir="$tmp/runs"
+  local output1="$tmp/cache-first.output.txt"
+  local output2="$tmp/cache-second.output.txt"
+  local counter="$tmp/counter.txt"
+
+  mkdir -p "$repo" "$log_dir"
+  make_fake_codex "$fake_codex"
+
+  COUNTER_FILE="$counter" XDG_CACHE_HOME="$tmp/cache-home" \
+    "$RUNNER" \
+      --repo "$repo" \
+      --task "Cache me once" \
+      --codex-bin "$fake_codex" \
+      --log-dir "$log_dir" \
+      > "$output1"
+
+  COUNTER_FILE="$counter" XDG_CACHE_HOME="$tmp/cache-home" \
+    "$RUNNER" \
+      --repo "$repo" \
+      --task "Cache me once" \
+      --codex-bin "$fake_codex" \
+      --log-dir "$log_dir" \
+      > "$output2"
+
+  local count
+  count="$(wc -l < "$counter" | tr -d ' ')"
+  assert_eq "1" "$count" "cache invocation count"
+
+  local cache_status
+  cache_status="$(extract_kv "$output2" cache_status)"
+  assert_eq "hit" "$cache_status" "cache hit status"
+
+  local summary_file
+  summary_file="$(extract_kv "$output2" summary_file)"
+  assert_file_exists "$summary_file"
+  assert_eq "hit" "$(json_get "$summary_file" cache.status)" "summary cache status"
+
+  rm -rf "$tmp"
+  pass "cache hit reuses prior result"
+}
+
+run_test_no_cache() {
+  local tmp
+  tmp="$(mktemp -d)"
+
+  local fake_codex="$tmp/fake_codex.sh"
+  local repo="$tmp/repo"
+  local log_dir="$tmp/runs"
+  local output1="$tmp/nocache-first.output.txt"
+  local output2="$tmp/nocache-second.output.txt"
+  local counter="$tmp/counter.txt"
+
+  mkdir -p "$repo" "$log_dir"
+  make_fake_codex "$fake_codex"
+
+  COUNTER_FILE="$counter" XDG_CACHE_HOME="$tmp/cache-home" \
+    "$RUNNER" \
+      --repo "$repo" \
+      --task "No cache task" \
+      --codex-bin "$fake_codex" \
+      --log-dir "$log_dir" \
+      --no-cache \
+      > "$output1"
+
+  COUNTER_FILE="$counter" XDG_CACHE_HOME="$tmp/cache-home" \
+    "$RUNNER" \
+      --repo "$repo" \
+      --task "No cache task" \
+      --codex-bin "$fake_codex" \
+      --log-dir "$log_dir" \
+      --no-cache \
+      > "$output2"
+
+  local count
+  count="$(wc -l < "$counter" | tr -d ' ')"
+  assert_eq "2" "$count" "no-cache invocation count"
+
+  local cache_status
+  cache_status="$(extract_kv "$output2" cache_status)"
+  assert_eq "disabled" "$cache_status" "no-cache status"
+
+  rm -rf "$tmp"
+  pass "--no-cache bypasses cache lookup/store"
+}
+
+run_test_summarize_flag() {
+  local tmp
+  tmp="$(mktemp -d)"
+
+  local fake_codex="$tmp/fake_codex.sh"
+  local repo="$tmp/repo"
+  local log_dir="$tmp/runs"
+  local output="$tmp/summarize.output.txt"
+
+  mkdir -p "$repo" "$log_dir"
+  make_fake_codex "$fake_codex"
+
+  "$RUNNER" \
+    --repo "$repo" \
+    --task "Summarize this run" \
+    --codex-bin "$fake_codex" \
+    --log-dir "$log_dir" \
+    --summarize \
+    > "$output"
+
+  local summary_line
+  summary_line="$(extract_kv "$output" summary_line)"
+  [[ -n "$summary_line" ]] || fail "expected summary_line output when --summarize is set"
+  [[ "$summary_line" == OK* ]] || fail "expected summary_line to start with OK, got: $summary_line"
+  [[ "$summary_line" == *"task=\"Summarize this run\""* ]] || fail "expected summarized task in summary_line"
+
+  local meta_file
+  meta_file="$(extract_kv "$output" meta_file)"
+  assert_file_exists "$meta_file"
+  [[ "$(json_get "$meta_file" one_line_summary)" == "$summary_line" ]] || fail "meta one_line_summary mismatch"
+
+  rm -rf "$tmp"
+  pass "--summarize emits one-line summary"
+}
+
 main() {
   run_test_basic
   run_test_advanced_options
   run_test_tier_mapping
   run_test_tokens_used_line
+  run_test_cache_hit
+  run_test_no_cache
+  run_test_summarize_flag
   echo "All tests passed."
 }
 

@@ -46,6 +46,7 @@ SCRIPT_FILES=(
   "run_gemini_task.sh"
   "parse_codex_run.py"
   "parse_gemini_run.py"
+  "summarize_codex_run.py"
   "job_queue.py"
   "job_queue_server.py"
   "notify_claude_hook.sh"

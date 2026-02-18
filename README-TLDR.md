@@ -52,9 +52,18 @@ Convenience wrapper (delegates to canonical runner):
 scripts/run_codex_task.sh --repo . --task "Fix failing tests"
 ```
 
+Review wrapper (auto-review on real failures, one-line summary enabled by default):
+
+```bash
+codex-job/scripts/invoke_codex_with_review.sh --repo . --task "Fix failing tests"
+```
+
 ## 4) Common options
 
 - `--tier low|medium|high` (default `low`)
+- `--no-cache` bypass cache lookup/store for this run
+- `--cache-dir <path>` override cache location
+- `--summarize` print a one-line run summary after completion
 - `--json-out <path>` write summary JSON to a specific path
 - `--event-stream <path>` append run events as JSON lines
 - `--notify-cmd "<cmd>"` send each event JSON to a command on stdin

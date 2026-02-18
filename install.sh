@@ -49,6 +49,7 @@ CORE_SCRIPT_FILES=(
   "run_gemini_task.sh"
   "parse_codex_run.py"
   "parse_gemini_run.py"
+  "summarize_codex_run.py"
   "notify_claude_hook.sh"
   "notify_terminal.sh"
   "verify_codex_work.sh"
