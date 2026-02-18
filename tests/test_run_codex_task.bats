@@ -54,6 +54,10 @@ shift 4
 
 MODE="${FAKE_MODE:-success}"
 
+if [[ -n "${COUNTER_FILE:-}" ]]; then
+  echo x >> "$COUNTER_FILE"
+fi
+
 case "$MODE" in
   long)
     echo "session id: 00000000-0000-0000-0000-000000000001"
@@ -199,6 +203,52 @@ print(0 if not text else len(text.splitlines()))
 PY
 )"
   [ "$notify_lines" -ge 2 ]
+
+  rm -rf "$tmp"
+}
+
+@test "--summarize emits summary_line on cache-hit path" {
+  tmp="$(mktemp -d)"
+  repo="$tmp/repo"
+  log_dir="$tmp/runs"
+  fake_codex="$tmp/fake_codex.sh"
+  counter="$tmp/counter.txt"
+  out_first="$tmp/first.out"
+  out_second="$tmp/second.out"
+  mkdir -p "$repo" "$log_dir"
+
+  make_fake_codex "$fake_codex"
+
+  COUNTER_FILE="$counter" XDG_CACHE_HOME="$tmp/cache-home" \
+    "$RUNNER" \
+      --repo "$repo" \
+      --task "Cache summarize task" \
+      --codex-bin "$fake_codex" \
+      --log-dir "$log_dir" \
+      > "$out_first"
+
+  COUNTER_FILE="$counter" XDG_CACHE_HOME="$tmp/cache-home" \
+    run "$RUNNER" \
+      --repo "$repo" \
+      --task "Cache summarize task" \
+      --codex-bin "$fake_codex" \
+      --log-dir "$log_dir" \
+      --summarize
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'cache_status=hit'* ]]
+
+  run_count="$(wc -l < "$counter" | tr -d ' ')"
+  [ "$run_count" -eq 1 ]
+
+  summary_line="$(echo "$output" | awk -F= '/^summary_line=/{print substr($0, index($0, "=")+1)}' | tail -1)"
+  [ -n "$summary_line" ]
+  [[ "$summary_line" == OK* ]]
+  [[ "$summary_line" == *'task="Cache summarize task"'* ]]
+
+  meta_file="$(echo "$output" | awk -F= '/^meta_file=/{print $2}' | tail -1)"
+  [ -f "$meta_file" ]
+  [ "$(json_get "$meta_file" one_line_summary)" = "$summary_line" ]
 
   rm -rf "$tmp"
 }

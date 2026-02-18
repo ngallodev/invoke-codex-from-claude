@@ -42,11 +42,29 @@ Quickstart: see `README-TLDR.md` for the shortest install/setup/use path.
    - Events: `runs/events.jsonl` (contains `run_started`, `run_completed`, and any review events).
 5. Resume a session if needed: `codex-job/scripts/run_codex_task.sh --repo /path/to/repo --resume <session_id> --task "Follow-up fixes"`.
 
+### Invoke Summarize Behavior
+- `codex-job/scripts/invoke_codex_with_review.sh` enables one-line summaries by default for both the initial run and any review run.
+- Disable summaries with `--no-summarize`.
+- Override the summarizer implementation with `--summarizer <path>` (passed through to `run_codex_task.sh`).
+- The one-line output is also stored in meta JSON as `one_line_summary`.
+
 ### Model Selection Tiers
 - `--tier` chooses a cost tier (default: `low`). Mapping: low → `gpt-3.5-turbo`, medium → `gpt-4o-mini`, high → `gpt-4o`.
 - If you also pass `--model`, the explicit model wins and the tier is recorded for telemetry only.
 - The selected model and source are written to the log, meta JSON, and summary JSON for auditing.
 - Result cache is enabled by default for new task runs. Use `--no-cache` to bypass lookup/store, or `--cache-dir <path>` to choose a specific cache location.
+
+### Cache Key Semantics
+- Cache lookup/store applies only to new task mode (`run_codex_task.sh` without `--resume`) when `--no-cache` is not set.
+- Cache entries are keyed by a hash of:
+  - Absolute repo path
+  - Git HEAD commit hash (or `nogit` outside a git work tree)
+  - Git dirty state (`clean`/`dirty`)
+  - Run mode (`new`)
+  - Selected model and tier
+  - Task text
+- Any change to those inputs creates a new key, resulting in a cache miss and a fresh Codex execution.
+- A valid cache hit requires `summary.json`, `meta.json`, and `log.txt` in the cache entry directory.
 
 ### Gemini Variant
 Swap the runner: `codex-job/scripts/run_gemini_task.sh --repo . --task "Implement feature" -- --model gemini-2.0-pro-exp`.
