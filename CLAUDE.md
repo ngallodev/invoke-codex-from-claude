@@ -20,4 +20,8 @@ invoke-codex-from-claude/
 
     ## Agents
     Agents for this task live in .claude/agents/team/ and are specced out in agent-notes/rec-subagent-list.md
+
+Steering:
+- Product steering and architecture direction are defined in `docs/STEERING.md`.
+- Core architecture draft decision record lives at `docs/ADR-0001-control-plane-core-architecture.md`.
     
