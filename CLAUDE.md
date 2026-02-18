@@ -25,4 +25,5 @@ Steering:
 - Product steering and architecture direction are defined in `docs/STEERING.md`.
 - Core architecture draft decision record lives at `docs/ADR-0001-control-plane-core-architecture.md`.
 - Core language selection draft decision record lives at `docs/ADR-0002-control-plane-language-selection.md`.
+- Persistence and queue strategy draft decision record lives at `docs/ADR-0003-persistence-and-queue-strategy.md`.
     
