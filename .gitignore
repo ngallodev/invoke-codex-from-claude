@@ -1,3 +1,13 @@
 runs/
 *.pyc
 __pycache__/
+node_modules/
+ui/node_modules/
+ui/dist/
+ui/.vite/
+ui/test-results/
+ui/playwright-report/
+
+ui/*.tsbuildinfo
+ui/*.d.ts
+ui/*.js

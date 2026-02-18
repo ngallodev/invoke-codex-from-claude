@@ -1,126 +1,20 @@
 #!/usr/bin/env python3
-import argparse
-import json
-import re
+"""Thin wrapper that delegates to the canonical parser under codex-job/scripts."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
 from pathlib import Path
-from typing import Any
 
 
-def parse_int(text: str) -> int | None:
-    cleaned = re.sub(r"[^0-9]", "", text)
-    return int(cleaned) if cleaned else None
+ROOT = Path(__file__).resolve().parent.parent
+TARGET = ROOT / "codex-job" / "scripts" / "parse_codex_run.py"
 
+if not TARGET.exists():
+    print(f"Error: canonical parser not found at {TARGET}", file=sys.stderr)
+    raise SystemExit(2)
 
-def parse_float(text: str) -> float | None:
-    try:
-        return float(text)
-    except (TypeError, ValueError):
-        return None
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def extract_token_usage(log_text: str) -> dict[str, Any]:
-    patterns = {
-        "input_tokens": [
-            r"input[_\s-]?tokens?\s*[:=]\s*([0-9][0-9,]*)",
-            r"prompt[_\s-]?tokens?\s*[:=]\s*([0-9][0-9,]*)",
-        ],
-        "output_tokens": [
-            r"output[_\s-]?tokens?\s*[:=]\s*([0-9][0-9,]*)",
-            r"completion[_\s-]?tokens?\s*[:=]\s*([0-9][0-9,]*)",
-        ],
-        "total_tokens": [
-            r"total[_\s-]?tokens?\s*[:=]\s*([0-9][0-9,]*)",
-            r"tokens?\s+used\s*(?:[:=]\s*)?([0-9][0-9,]*)",
-        ],
-    }
-
-    result: dict[str, Any] = {
-        "input_tokens": None,
-        "output_tokens": None,
-        "total_tokens": None,
-        "evidence": {},
-    }
-
-    for key, key_patterns in patterns.items():
-        for pat in key_patterns:
-            matches = re.findall(pat, log_text, flags=re.IGNORECASE)
-            if matches:
-                raw = matches[-1]
-                result[key] = parse_int(raw)
-                result["evidence"][key] = {"pattern": pat, "raw": raw}
-                break
-
-    if result["total_tokens"] is None and result["input_tokens"] is not None and result["output_tokens"] is not None:
-        result["total_tokens"] = result["input_tokens"] + result["output_tokens"]
-        result["evidence"]["total_tokens"] = {"derived": "input_tokens + output_tokens"}
-
-    return result
-
-
-def extract_cost(log_text: str) -> dict[str, Any]:
-    # Only accept lines that look like explicit cost fields, not arbitrary prose containing "$".
-    cost_patterns = [
-        r"\bcost(?:_usd)?\s*[:=]\s*\$?\s*([0-9]+(?:\.[0-9]+)?)",
-        r"\busd\s*[:=]\s*\$?\s*([0-9]+(?:\.[0-9]+)?)",
-        r"\btotal\s+cost\b\s*[:=]\s*\$?\s*([0-9]+(?:\.[0-9]+)?)",
-    ]
-
-    for line in reversed(log_text.splitlines()):
-        stripped = line.strip()
-        for pat in cost_patterns:
-            match = re.search(pat, stripped, flags=re.IGNORECASE)
-            if match:
-                usd = parse_float(match.group(1))
-                if usd is not None:
-                    return {"usd": usd, "evidence": stripped}
-
-    return {"usd": None, "evidence": None}
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Parse Codex run output into normalized JSON summary.")
-    parser.add_argument("--log", required=True, help="Path to raw codex log file")
-    parser.add_argument("--meta", help="Path to meta JSON emitted by run_codex_task.sh")
-    args = parser.parse_args()
-
-    log_path = Path(args.log)
-    meta = load_json(Path(args.meta)) if args.meta else {}
-
-    log_text = ""
-    if log_path.exists():
-        log_text = log_path.read_text(encoding="utf-8", errors="replace")
-
-    token_usage = extract_token_usage(log_text)
-    cost = extract_cost(log_text)
-
-    output = {
-        "run_id": meta.get("run_id"),
-        "session_id": meta.get("session_id"),
-        "resume_session": meta.get("resume_session"),
-        "repo": meta.get("repo"),
-        "task": meta.get("task"),
-        "started_at": meta.get("started_at"),
-        "ended_at": meta.get("ended_at"),
-        "elapsed_seconds": meta.get("elapsed_seconds"),
-        "exit_code": meta.get("exit_code"),
-        "success": meta.get("exit_code") == 0 if isinstance(meta.get("exit_code"), int) else None,
-        "log_file": str(log_path),
-        "meta_file": args.meta,
-        "token_usage": token_usage,
-        "cost": cost,
-    }
-
-    print(json.dumps(output, ensure_ascii=True, indent=2))
-
-
-if __name__ == "__main__":
-    main()
+cmd = [sys.executable, str(TARGET), *sys.argv[1:]]
+raise SystemExit(subprocess.call(cmd, env=os.environ.copy()))

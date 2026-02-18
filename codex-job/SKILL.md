@@ -29,6 +29,7 @@ Use `/codex-job` to offload implementation-ready tasks to Codex.
 - Choose Model: `gpt-5.1-codex-mini` (simple), `gpt-5.1-codex-max` (default), `gpt-5.2-codex` (complex)
 - Launch with: `scripts/invoke_codex_with_review.sh --repo <path> --task "<task>"`
 - Prefer `--notify-cmd "scripts/notify_terminal.sh"`.
+- Note: these `scripts/...` paths are skill-local runtime scripts, not root-repo wrappers.
 
 3. Read summary JSON on completion; verify if risk/impact requires it.
 4. If additional fixes are needed, resume with `--resume <session_id>` or `--resume latest`.

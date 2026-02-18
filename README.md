@@ -1,55 +1,143 @@
 # invoke-codex-from-claude
+Wrapper scripts that launch Codex (and Gemini) from Claude, capture structured run metadata, and support automatic resume/review with optional webhook events.
+Quickstart: see `README-TLDR.md` for the shortest install/setup/use path.
 
-Minimal wrapper that runs `codex` or `gemini` (and other LLMs) in a forked shell and emits structured summaries for Claude hooks.
+## Script Layout
+- Canonical runtime implementation lives in `codex-job/scripts/` and is the source of truth.
+- Root `scripts/` are thin executable wrappers for shell/Python orchestration and should only delegate to `codex-job/scripts/`.
+- Skill code must never reference root `scripts/`.
 
-All scripts and skill source files live under `codex-job/` at the repo root.
+## Prerequisites
+- `bash` with `set -euo pipefail` support, `python3` (for parsers), and `jq` for inspecting summaries.
+- Codex CLI installed and authenticated (typically via `CODEX_API_KEY`; see your Codex docs).
+- Optional: Gemini CLI if you plan to use the Gemini runners.
+- `curl` for webhook notifications, `rg` (ripgrep) for tests, and `chmod`/`cp` for installs.
 
-## Quick run (Codex)
-```bash
-codex-job/scripts/run_codex_task.sh --repo . --task "Fix feature X"
-```
+## Installation
+- Install the skill into your preferred scope:
+  - Project-local: `./install.sh --scope project`
+  - User/global: `./install.sh --scope user`
+- Preview without changes: append `--dry-run`.
+- Deferred Phase 2/3 runtime scripts (queue/dashboard) are opt-in: add `--include-experimental`.
+- Uninstall: `./uninstall.sh --scope user` (add `--dry-run` to preview).
+- Skill assets live in `.claude/skills/codex-job/`; runtime scripts are copied into that skill’s `scripts/` directory. PATH edits are wrapped in tagged blocks for safe re-run and removal.
 
-## Quick run (Gemini)
-```bash
-codex-job/scripts/run_gemini_task.sh --repo . --task "Fix feature X"
-```
+## End-to-End Example (Codex)
+1. Ensure `CODEX_API_KEY` is exported for the Codex CLI.
+2. (Optional) Set a callback: `export CLAUDE_HOOK_URL=https://example.com/codex-events`.
+3. Run with automatic review + events:
+   ```bash
+   codex-job/scripts/invoke_codex_with_review.sh \
+     --repo /path/to/repo \
+     --task "Fix failing tests" \
+     --tier medium \
+     --event-stream runs/events.jsonl \
+     --notify-cmd "codex-job/scripts/notify_claude_hook.sh --url https://example.com/codex-events" \
+     -- --model gpt-5.1-codex-max
+   ```
+   `invoke_codex_with_review.sh` enables `--summarize` by default; pass `--no-summarize` to disable.
+4. Results:
+   - Log: `runs/codex-run-<run_id>.log`
+   - Summary JSON: `runs/codex-run-<run_id>.summary.json`
+   - Events: `runs/events.jsonl` (contains `run_started`, `run_completed`, and any review events).
+5. Resume a session if needed: `codex-job/scripts/run_codex_task.sh --repo /path/to/repo --resume <session_id> --task "Follow-up fixes"`.
 
-## Deploy Skill to `~/.claude/skills/`
-```bash
-rm -rf ~/.claude/skills/codex-job
-cp -R codex-job ~/.claude/skills/codex-job
-```
+### Invoke Summarize Behavior
+- `codex-job/scripts/invoke_codex_with_review.sh` enables one-line summaries by default for both the initial run and any review run.
+- Disable summaries with `--no-summarize`.
+- Override the summarizer implementation with `--summarizer <path>` (passed through to `run_codex_task.sh`).
+- The one-line output is also stored in meta JSON as `one_line_summary`.
 
-Scripts are installed to `~/.claude/skills/codex-job/scripts/`. The skill includes templates, tools, and reference documentation.
+### Model Selection Tiers
+- `--tier` chooses a cost tier (default: `low`). Mapping: low → `gpt-3.5-turbo`, medium → `gpt-4o-mini`, high → `gpt-4o`.
+- If you also pass `--model`, the explicit model wins and the tier is recorded for telemetry only.
+- The selected model and source are written to the log, meta JSON, and summary JSON for auditing.
+- Result cache is enabled by default for new task runs. Use `--no-cache` to bypass lookup/store, or `--cache-dir <path>` to choose a specific cache location.
 
-## Logging
-Log verbosity defaults to `low`. To increase it:
-```bash
-codex-job/scripts/run_codex_task.sh ... -v
-codex-job/scripts/run_codex_task.sh ... -vv
-codex-job/scripts/run_codex_task.sh ... -vvv
-```
+### Cache Key Semantics
+- Cache lookup/store applies only to new task mode (`run_codex_task.sh` without `--resume`) when `--no-cache` is not set.
+- Cache entries are keyed by a hash of:
+  - Absolute repo path
+  - Git HEAD commit hash (or `nogit` outside a git work tree)
+  - Git dirty state (`clean`/`dirty`)
+  - Run mode (`new`)
+  - Selected model and tier
+  - Task text
+- Any change to those inputs creates a new key, resulting in a cache miss and a fresh Codex execution.
+- A valid cache hit requires `summary.json`, `meta.json`, and `log.txt` in the cache entry directory.
 
-Pass extra arguments after a `--`:
-```bash
-codex-job/scripts/run_gemini_task.sh ... -- --model gemini-2.0-flash
-```
+### Gemini Variant
+Swap the runner: `codex-job/scripts/run_gemini_task.sh --repo . --task "Implement feature" -- --model gemini-2.0-pro-exp`.
 
-## Tests
-```bash
-tests/test_runner_and_parser.sh
-tests/test_gemini_runner_and_parser.sh
-```
+## Environment Variables
+- `CODEX_API_KEY`: Required by the Codex CLI for authentication (validated by the runner).
+- `CODEX_LOG_VERBOSITY` / `GEMINI_LOG_VERBOSITY`: Default log verbosity (`low` | `normal` | `high` | `extreme`).
+- `CLAUDE_HOOK_URL`: Default callback URL for `notify_claude_hook.sh`.
+- `CODEX_WEBHOOK_SECRET` or `WEBHOOK_SECRET`: Required when `--notify-cmd` is set; used to HMAC‑sign webhook bodies as `X-Signature: sha256=<hex>`.
+- Coordination hooks:
+  - Future summary schema trimming from `json-minimizer` will keep a lean key set; see below.
 
-## Output
-Each run prints `codex_run_id`, `codex_exit_code`, `elapsed_seconds`, `log_file`, `meta_file`, `summary_file`, plus `summary_json={…}` for easy parsing. Log verbosity defaults to `low` and can be raised with `-v`, `-vv`, or `-vvv`.
+## Summary JSON (lean format)
+Generated by `codex-job/scripts/parse_codex_run.py` and `codex-job/scripts/parse_gemini_run.py` (root wrappers delegate to these canonical scripts; installed copies live under `~/.claude/skills/codex-job/scripts/`):
+- Short keys (default): `id`, `sid` (session), `repo`, `task`, `resume`, `start`, `end`, `time` (seconds), `exit`, `ok`, `log`, `meta`, `tok.{in,out,tot,ev}`, `cost.{usd,ev}`, `err`, `src`.
+- Backward compatibility: a nested `legacy` object carries the previous verbose fields (`run_id`, `session_id`, `elapsed_seconds`, `exit_code`, `token_usage`, `cost`, etc.) for consumers that still expect them.
+- To force an inline legacy copy for debugging, set `SUMMARY_JSON_LEGACY=1` before running.
 
-## Event Notifications
-`run_codex_task.sh` can emit status events:
-- `--notify-cmd "<shell command>"` sends each event JSON object to the command on stdin
-- `--event-stream <path>` appends JSONL events for local tracking
+### Python post-processing example (L5)
+- Script: `scripts/summary_minifier.py` emits a compact view from the canonical summary JSON (supports lean + nested `legacy` inputs).
+- Usage (stdout): `scripts/summary_minifier.py --input runs/codex-run-<id>.summary.json`
+- Usage (write file): `scripts/summary_minifier.py -i runs/codex-run-<id>.summary.json -o runs/codex-run-<id>.summary.min.json`
+- Output keys: `id`, `sess`, `repo`, `task`, `resume`, `start`, `end`, `time`, `exit`, `ok`, `msg`, `log`, `meta`, `tokens.{in,out,total}`, `cost`, `source`.
+- One-line terminal summary: `codex-job/scripts/summarize_codex_run.py --summary runs/codex-run-<id>.summary.json`
+- Inline one-line summary from runner: add `--summarize` (optionally `--summarizer <path>`) to `run_codex_task.sh`.
 
-Helper script:
-```bash
-echo '{"event":"ping"}' | codex-job/scripts/notify_claude_hook.sh --url https://<callback-endpoint>
-```
+## Dry-Run and Verification
+- Install/uninstall: use `--dry-run` to preview file operations without writing; installers are idempotent and safe to re-run.
+- Webhook delivery: `codex-job/scripts/notify_claude_hook.sh --dry-run` echoes the payload instead of calling the URL.
+- Webhook signatures: when `--secret`, `WEBHOOK_SECRET`, or `CODEX_WEBHOOK_SECRET` is set, the payload is signed with `X-Signature: sha256=<hex>`. Receivers should compute `hmac_sha256(secret, raw_body)` and compare in constant time. Quick check in Bash:
+  ```bash
+  expected=$(SECRET="$WEBHOOK_SECRET" BODY="$(cat payload.json)" python3 - <<'PY'
+import hashlib, hmac, os
+print(hmac.new(os.environ["SECRET"].encode(), os.environ["BODY"].encode(), hashlib.sha256).hexdigest())
+PY
+  )
+  [[ "sha256=$expected" == "$X_SIGNATURE_FROM_REQUEST" ]]
+  ```
+- Event capture: add `--event-stream runs/events.jsonl` to any runner to keep a local JSONL trail while iterating.
+
+## Troubleshooting
+- **CLI not found**: ensure `codex` or `gemini` is on `PATH`; otherwise set `--codex-bin`/`--gemini-bin`.
+- **Missing session id**: check the log for `session id:` lines; the parser records `session_id` as `null` when absent.
+- **No summary_json line**: confirm `codex-job/scripts/parse_codex_run.py` is executable (or use the installed skill copy) and that the log path is writable.
+- **Webhook failures**: use `--dry-run` on `notify_claude_hook.sh` to validate payloads before sending; verify `CLAUDE_HOOK_URL` or `--url` is set and `curl` is installed.
+- **Token metrics empty**: Codex/Gemini must emit token lines; if missing, only `total_tokens` may be populated from fallback patterns.
+
+## Doctor Mode
+- Run environment diagnostics (commands, env vars, repo/log/temp access, optional Codex connectivity) without executing a task:
+  ```bash
+  codex-job/scripts/run_codex_task.sh --doctor --repo . --codex-bin codex
+  ```
+- Exits non-zero when required checks fail; warnings (e.g., missing optional webhook secrets) do not fail the doctor run.
+
+## UI (Local-First)
+- The initial operator UI scaffold lives in `ui/`.
+- Diagnose environment: `bash scripts/ui_doctor.sh`
+- Bootstrap dependencies and smoke checks: `bash scripts/bootstrap_ui.sh`
+- Run UI locally:
+  ```bash
+  cd ui
+  npm run dev
+  ```
+- Default dev URL: `http://localhost:4173`
+
+## Testing
+- Core agents metadata: `tests/test_agents_metadata.sh`
+- Event/schema contracts: `tests/test_contract_schemas.sh`
+- Codex runner + parser: `tests/test_runner_and_parser.sh`
+- Gemini runner + parser: `tests/test_gemini_runner_and_parser.sh`
+- Invoke + notify + review flow: `tests/test_invoke_and_notify.sh`
+- Install/uninstall dry-run sanity: `tests/test_install_dry_run.sh`
+- Run from repo root: `bash tests/test_runner_and_parser.sh` (tests create their own temp repos and fake CLIs).
+
+## Uninstall
+`./uninstall.sh --scope user` removes the installed skill and legacy root-level scripts; add `--dry-run` to preview.

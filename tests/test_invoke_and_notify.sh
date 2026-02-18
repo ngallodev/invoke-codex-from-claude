@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNNER="$ROOT_DIR/scripts/run_codex_task.sh"
 INVOKER="$ROOT_DIR/scripts/invoke_codex_with_review.sh"
+export CODEX_API_KEY="test-key"
+export WEBHOOK_SECRET="test-secret"
 
 fail() {
   echo "[FAIL] $*" >&2
@@ -216,12 +218,42 @@ run_test_invoke_real_failure_triggers_review_and_events() {
   pass "invoke triggers review + emits wrapper events"
 }
 
+run_test_invoke_summary_defaults() {
+  local tmp
+  tmp="$(mktemp -d)"
+
+  local fake_codex="$tmp/fake_codex.sh"
+  local fake_counter="$tmp/fake_counter.txt"
+  local repo="$tmp/repo"
+  local out_default="$tmp/invoke-default.out"
+  local out_no="$tmp/invoke-no-summary.out"
+  mkdir -p "$repo"
+
+  make_fake_codex_sequence "$fake_codex" "$fake_counter"
+
+  FAKE_MODE=success FAKE_COUNTER_FILE="$fake_counter" \
+    "$INVOKER" --repo "$repo" --task "default summary" --codex-bin "$fake_codex" > "$out_default" 2>&1
+
+  rg -n '^summary_line=' "$out_default" >/dev/null || fail "expected summary_line in default invoke output"
+
+  : > "$fake_counter"
+  FAKE_MODE=success FAKE_COUNTER_FILE="$fake_counter" \
+    "$INVOKER" --repo "$repo" --task "no summary" --codex-bin "$fake_codex" --no-summarize > "$out_no" 2>&1
+
+  if rg -n '^summary_line=' "$out_no" >/dev/null; then
+    fail "did not expect summary_line when --no-summarize is set"
+  fi
+
+  rm -rf "$tmp"
+  pass "invoke summarize default + no-summarize override"
+}
+
 main() {
   run_test_quote_safe_metadata_and_notify_events
   run_test_invoke_environmental_failure_treated_success
   run_test_invoke_real_failure_triggers_review_and_events
+  run_test_invoke_summary_defaults
   echo "All tests passed."
 }
 
 main "$@"
-

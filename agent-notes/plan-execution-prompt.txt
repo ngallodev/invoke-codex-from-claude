@@ -1,0 +1,34 @@
+Run the following multi-agent workflow exactly:
+
+1) Spin up these agents with their instruction files under `./.claude/agents/team/`:
+   - C1/C2: `security-hardener`, `bash-error-handling-specialist`
+   - C3: `test-generator-shell`
+   - C4: `installation-engineer`
+   - C5/N5: `technical-writer`
+   - L1: `caching-architect`
+   - L2: `json-minimizer`
+   - L3: `model-tier-integrator`
+   - L5: `python-post-processor`
+   - N1: `job-queue-designer`
+   - N3: `webhook-signer`
+   - N4: `self-diagnosis-creator`
+
+2) Parallelize where dependencies allow (see `agent-notes/go-live-rec-detailed-plan.md` section “Optimized Multi-Agent Execution Plan”). Coordinate edits to `run_codex_task.sh` sequentially to avoid conflicts (C1/C2 → L1/L2/L3).
+
+3) Communication policy: agents stay silent until completion; return a single final message with success/failure plus telemetry only. Telemetry gate: set `TELEMETRY_ENABLED=1` (default) to include metrics; set to 0 to suppress. Required telemetry keys when enabled: `input_tokens`, `output_tokens`, `cached_tokens`, `context_tokens`, `elapsed_seconds`. Optional detailed notes must go to `agent-history.log` in repo root, not stdout.
+
+4) Testing gates:
+   - Run `tests/test_agents_metadata.sh` to ensure agent instructions stay compliant.
+   - Keep existing tests green: `tests/test_runner_and_parser.sh`, `tests/test_gemini_runner_and_parser.sh`, `tests/test_invoke_and_notify.sh`.
+   - Add/execute feature-specific bats/CLI tests each time a task changes shared scripts. A task is complete only after its tests pass.
+
+5) Deliverables per task:
+   - C1/C2/C3: hardened `run_codex_task.sh` with timeout/traps, env validation, JSON guarantees, and expanded bats coverage.
+   - C4: idempotent `install.sh`, new `uninstall.sh`, both supporting `--dry-run`.
+   - C5: updated README (prereqs, example, troubleshooting).
+   - L1/L2/L3/L5: caching, minimal JSON schema, `--tier` flag, and Python post-processor documented.
+   - N1/N3/N4/N5: job queue + dashboard, webhook signing, `--doctor`, CONTRIBUTING guide.
+
+6) Report progress after each merged branch; block releases on failing tests or missing telemetry.
+
+7) When ready to start, launch agents and begin with C1/C2 hardening; proceed per dependencies above.

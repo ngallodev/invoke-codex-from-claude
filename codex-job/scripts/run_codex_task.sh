@@ -1,5 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  run_codex_task.sh --repo <path> [--task <text>] [--resume <session>] [options] [-- <extra codex args...>]
+
+Options:
+  --repo <path>         Repository/workdir for codex exec --cd (required)
+  --doctor              Run environment diagnostics and exit
+  --task <text>         Task prompt for Codex (required unless --resume is used)
+  --resume <session>    Resume an existing Codex session by ID (optional)
+  --codex-bin <path>    Codex binary/command (default: codex)
+  --log-dir <path>      Directory for logs/metadata (default: ./runs)
+  --json-out <path>     Write parsed JSON summary to this file
+  --notify-cmd <cmd>    Shell command to receive event JSON on stdin
+  --event-stream <path> Append event JSON lines to this file
+  --tier <level>        Model tier: low (default), medium, high
+  --no-cache            Disable result cache lookup/store for this run
+  --cache-dir <path>    Override cache directory (default: $XDG_CACHE_HOME/codex-job or ~/.cache/codex-job)
+  --summarize           Emit one-line summary after run completion
+  --summarizer <path>   Override one-line summarizer script path
+  -v|-vv|-vvv           Log verbosity: normal, high, extreme
+  --verbosity <level>   Log verbosity: low, normal, high, extreme (default: low)
+  -h, --help            Show this help text
+
+Environment:
+  CODEX_API_KEY         Required for Codex CLI authentication
+  CODEX_TIMEOUT_SECONDS Timeout for codex command (default: 1800)
+  CODEX_CACHE_DIR       Optional cache directory override
+  CODEX_SUMMARIZER_PATH Optional one-line summarizer script path
+  CODEX_WEBHOOK_SECRET  Optional signing secret for notify hooks
+  WEBHOOK_SECRET        Optional signing secret for notify hooks
+USAGE
+}
 
 shell_join() {
   local out=""
@@ -14,34 +49,34 @@ shell_join() {
   printf '%s' "$out"
 }
 
-usage() {
-  cat <<'USAGE'
-Usage:
-  run_codex_task.sh --repo <path> [--task <text>] [--resume <session>] [options] [-- <extra codex args...>]
-
-Options:
-  --repo <path>         Repository/workdir for codex exec --cd (required)
-  --task <text>         Task prompt for Codex (required unless --resume is used)
-  --resume <session>    Resume an existing Codex session by ID (optional)
-  --codex-bin <path>    Codex binary/command (default: codex)
-  --log-dir <path>      Directory for logs/metadata (default: ./runs)
-  --json-out <path>     Write parsed JSON summary to this file
-  --notify-cmd <cmd>    Shell command to receive event JSON on stdin
-  --event-stream <path> Append event JSON lines to this file
-  -v|-vv|-vvv           Log verbosity: normal, high, extreme
-  --verbosity <level>   Log verbosity: low, normal, high, extreme (default: low)
-  -h, --help            Show this help text
-
-Examples:
-  scripts/run_codex_task.sh --repo /path/to/your/repo --task "Fix failing tests"
-  scripts/run_codex_task.sh --repo . --task "Implement feature" -- --model gpt-5-codex
-USAGE
+require_env_var() {
+  local name="$1"
+  local reason="$2"
+  if [[ -z "${!name:-}" ]]; then
+    if [[ -n "$reason" ]]; then
+      echo "Error: required environment variable $name is not set ($reason)." >&2
+    else
+      echo "Error: required environment variable $name is not set." >&2
+    fi
+    exit 2
+  fi
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PARSER="$SCRIPT_DIR/parse_codex_run.py"
-SCRIPT_PATH="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
-ORIGINAL_ARGS=("$@")
+require_any_env_var() {
+  local reason="$1"
+  shift
+  local name
+  for name in "$@"; do
+    if [[ -n "${!name:-}" ]]; then
+      return 0
+    fi
+  done
+  echo "Error: one of the following environment variables must be set ($reason): $*" >&2
+  exit 2
+}
+
+DOCTOR_FAILS=0
+DOCTOR_WARNINGS=0
 
 REPO=""
 TASK=""
@@ -52,65 +87,482 @@ JSON_OUT=""
 LOG_VERBOSITY="${CODEX_LOG_VERBOSITY:-low}"
 NOTIFY_CMD=""
 EVENT_STREAM=""
+DOCTOR_MODE=0
+MODEL_TIER=""
 EXTRA_ARGS=()
+ORIGINAL_ARGS=("$@")
+CACHE_ENABLED=1
+CACHE_DIR="${CODEX_CACHE_DIR:-}"
+CACHE_KEY=""
+CACHE_ENTRY_DIR=""
+CACHE_STATUS="off"
+CACHE_ELIGIBLE=0
+CACHE_HIT=0
+SUMMARIZE=0
+SUMMARY_LINE=""
+SUMMARIZER="${CODEX_SUMMARIZER_PATH:-}"
 
-make_event_json() {
-  local event_name="$1"
-  local event_status="$2"
-  local event_exit="${3:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PARSER="$SCRIPT_DIR/parse_codex_run.py"
+if [[ -z "$SUMMARIZER" ]]; then
+  SUMMARIZER="$SCRIPT_DIR/summarize_codex_run.py"
+fi
 
-  EVENT_NAME="$event_name" \
-  EVENT_STATUS="$event_status" \
-  EVENT_EXIT="$event_exit" \
-  EVENT_RUN_ID="$RUN_ID" \
-  EVENT_SESSION_ID="$SESSION_ID" \
-  EVENT_REPO="$REPO" \
-  EVENT_MODE="$MODE" \
-  EVENT_LOG_FILE="$LOG_FILE" \
-  EVENT_META_FILE="$META_FILE" \
-  EVENT_SUMMARY_FILE="$EVENT_SUMMARY_FILE" \
-  EVENT_STARTED_AT="$START_ISO" \
-  EVENT_ENDED_AT="$END_ISO" \
-  EVENT_ELAPSED="$ELAPSED" \
+RUN_ID=""
+LOG_FILE=""
+META_FILE=""
+SUMMARY_PATH=""
+START_EPOCH=""
+END_EPOCH=""
+ELAPSED=""
+START_ISO=""
+END_ISO=""
+START_LOCAL=""
+END_LOCAL=""
+SESSION_ID="unknown"
+MODE="new"
+MODEL_SELECTED=""
+MODEL_SOURCE=""
+CODEX_CMD=()
+CODEX_CMD_QUOTED=""
+SCRIPT_CMD_QUOTED=""
+CODEX_EXIT=1
+ERROR_MSG=""
+SUMMARY_WRITTEN=0
+FINALIZED=0
+IN_RUN_MODE=0
+RUN_COMPLETED_EVENT_EMITTED=0
+
+DEFAULT_MODEL_TIER="low"
+CODEX_TIMEOUT_SECONDS="${CODEX_TIMEOUT_SECONDS:-1800}"
+
+doctor_line() {
+  local status="$1"
+  local label="$2"
+  local detail="$3"
+  case "$status" in
+    PASS)
+      printf '[PASS] %s - %s\n' "$label" "$detail"
+      ;;
+    WARN)
+      DOCTOR_WARNINGS=$((DOCTOR_WARNINGS + 1))
+      printf '[WARN] %s - %s\n' "$label" "$detail"
+      ;;
+    FAIL|ERROR)
+      DOCTOR_FAILS=$((DOCTOR_FAILS + 1))
+      printf '[FAIL] %s - %s\n' "$label" "$detail"
+      ;;
+    *)
+      printf '[INFO] %s - %s\n' "$label" "$detail"
+      ;;
+  esac
+}
+
+doctor_check_command() {
+  local cmd="$1"
+  local fix="$2"
+  if command -v "$cmd" >/dev/null 2>&1; then
+    doctor_line "PASS" "command:$cmd" "found at $(command -v "$cmd")"
+  else
+    doctor_line "FAIL" "command:$cmd" "$fix"
+  fi
+}
+
+doctor_check_required_env() {
+  local name="$1"
+  local help="$2"
+  if [[ -n "${!name:-}" ]]; then
+    doctor_line "PASS" "env:$name" "set"
+  else
+    doctor_line "FAIL" "env:$name" "$help"
+  fi
+}
+
+doctor_check_optional_env() {
+  local name="$1"
+  local help="$2"
+  if [[ -n "${!name:-}" ]]; then
+    doctor_line "PASS" "env:$name" "set"
+  else
+    doctor_line "WARN" "env:$name" "$help"
+  fi
+}
+
+doctor_check_repo() {
+  if [[ -z "$REPO" ]]; then
+    doctor_line "FAIL" "repo" "--repo is required for diagnostics"
+    return
+  fi
+  if [[ ! -d "$REPO" ]]; then
+    doctor_line "FAIL" "repo" "path is not a directory: $REPO"
+    return
+  fi
+  if [[ ! -r "$REPO" ]]; then
+    doctor_line "FAIL" "repo" "not readable: $REPO"
+    return
+  fi
+  if [[ -w "$REPO" ]]; then
+    doctor_line "PASS" "repo" "read/write ok at $(cd "$REPO" && pwd)"
+  else
+    doctor_line "WARN" "repo" "readable but not writable at $(cd "$REPO" && pwd)"
+  fi
+}
+
+doctor_check_tmp() {
+  local tmp_root="${TMPDIR:-/tmp}"
+  local tmp_dir
+  if tmp_dir="$(mktemp -d "$tmp_root/codex-doctor.XXXXXX" 2>/dev/null)"; then
+    if echo "probe" >"$tmp_dir/write-test" 2>/dev/null; then
+      doctor_line "PASS" "tempdir" "writable at $tmp_dir"
+      rm -f "$tmp_dir/write-test"
+    else
+      doctor_line "FAIL" "tempdir" "cannot write inside $tmp_dir"
+    fi
+    rmdir "$tmp_dir" 2>/dev/null || true
+  else
+    doctor_line "FAIL" "tempdir" "cannot create temp dir under $tmp_root"
+  fi
+}
+
+doctor_check_codex_ping() {
+  if [[ -z "$REPO" || ! -d "$REPO" ]]; then
+    doctor_line "WARN" "codex ping" "repo not available; skipping connectivity probe"
+    return
+  fi
+  if ! command -v "$CODEX_BIN" >/dev/null 2>&1; then
+    doctor_line "WARN" "codex ping" "codex binary not found; skipping connectivity probe"
+    return
+  fi
+  if [[ -z "${CODEX_API_KEY:-}" ]]; then
+    doctor_line "WARN" "codex ping" "CODEX_API_KEY missing; skipping connectivity probe"
+    return
+  fi
+
+  local cmd=("$CODEX_BIN" exec --cd "$REPO" "doctor connectivity probe")
+  if command -v timeout >/dev/null 2>&1; then
+    cmd=(timeout 5 "${cmd[@]}")
+  fi
+
+  set +e
+  "${cmd[@]}" >/dev/null 2>&1
+  local status=$?
+  set -e
+
+  if [[ "$status" -eq 0 ]]; then
+    doctor_line "PASS" "codex ping" "exec probe succeeded"
+  else
+    doctor_line "WARN" "codex ping" "exec probe failed (exit $status); check CODEX_API_KEY or network"
+  fi
+}
+
+run_doctor() {
+  echo "== Codex Doctor =="
+  doctor_check_command "$CODEX_BIN" "Install Codex CLI or pass --codex-bin <path>"
+  doctor_check_command "jq" "Install jq to parse summaries"
+  doctor_check_command "git" "Install git to capture repo state"
+  doctor_check_command "python3" "Install python3 to enable log parsing"
+
+  case "$LOG_VERBOSITY" in
+    low|normal|high|extreme)
+      doctor_line "PASS" "verbosity" "level set to $LOG_VERBOSITY"
+      ;;
+    *)
+      doctor_line "WARN" "verbosity" "unknown level '$LOG_VERBOSITY'; defaulting to low"
+      LOG_VERBOSITY="low"
+      ;;
+  esac
+
+  doctor_check_required_env "CODEX_API_KEY" "export CODEX_API_KEY=<token> before running Codex"
+  doctor_check_optional_env "CODEX_WEBHOOK_SECRET" "set when using --notify-cmd to sign events"
+  doctor_check_optional_env "WEBHOOK_SECRET" "set when using --notify-cmd to sign events"
+
+  doctor_check_repo
+  doctor_check_tmp
+  doctor_check_codex_ping
+
+  if [[ "$DOCTOR_FAILS" -eq 0 ]]; then
+    echo "Doctor result: PASS (warnings=$DOCTOR_WARNINGS)"
+    return 0
+  fi
+
+  echo "Doctor result: FAIL (failures=$DOCTOR_FAILS warnings=$DOCTOR_WARNINGS)"
+  return 1
+}
+
+detect_model_arg() {
+  local prev=""
+  local arg
+  for arg in "${EXTRA_ARGS[@]}"; do
+    if [[ "$prev" == "--model" ]]; then
+      echo "$arg"
+      return 0
+    fi
+    if [[ "$arg" == --model=* ]]; then
+      echo "${arg#--model=}"
+      return 0
+    fi
+    prev="$arg"
+  done
+  return 1
+}
+
+map_tier_to_model() {
+  case "$1" in
+    low) echo "gpt-3.5-turbo" ;;
+    medium) echo "gpt-4o-mini" ;;
+    high) echo "gpt-4o" ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_cache_dir() {
+  if [[ -n "$CACHE_DIR" ]]; then
+    printf '%s' "$CACHE_DIR"
+    return 0
+  fi
+  if [[ -n "${XDG_CACHE_HOME:-}" ]]; then
+    printf '%s' "$XDG_CACHE_HOME/codex-job"
+    return 0
+  fi
+  if [[ -n "${HOME:-}" ]]; then
+    printf '%s' "$HOME/.cache/codex-job"
+    return 0
+  fi
+  printf '%s' "$LOG_DIR/.cache/codex-job"
+}
+
+hash_text_stdin() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+    return 0
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{print $1}'
+    return 0
+  fi
   python3 - <<'PY'
+import hashlib
+import sys
+print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())
+PY
+}
+
+repo_fingerprint() {
+  local repo_abs
+  repo_abs="$(cd "$REPO" && pwd)"
+
+  local git_head="nogit"
+  local git_dirty="unknown"
+  if git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git_head="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)"
+    if [[ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]]; then
+      git_dirty="dirty"
+    else
+      git_dirty="clean"
+    fi
+  fi
+
+  cat <<EOF
+repo=$repo_abs
+head=$git_head
+dirty=$git_dirty
+mode=$MODE
+model=$MODEL_SELECTED
+tier=$MODEL_TIER
+task=$TASK
+EOF
+}
+
+prepare_cache_lookup() {
+  if [[ "$CACHE_ENABLED" -ne 1 ]]; then
+    CACHE_STATUS="disabled"
+    return 1
+  fi
+  if [[ "$MODE" != "new" || -z "$TASK" ]]; then
+    CACHE_STATUS="skipped"
+    return 1
+  fi
+
+  CACHE_DIR="$(resolve_cache_dir)"
+  if ! mkdir -p "$CACHE_DIR" 2>/dev/null; then
+    CACHE_DIR="$LOG_DIR/.cache/codex-job"
+    if ! mkdir -p "$CACHE_DIR" 2>/dev/null; then
+      CACHE_STATUS="disabled"
+      CACHE_ELIGIBLE=0
+      CACHE_HIT=0
+      return 1
+    fi
+  fi
+
+  CACHE_KEY="$(repo_fingerprint | hash_text_stdin)"
+  CACHE_ENTRY_DIR="$CACHE_DIR/$CACHE_KEY"
+  CACHE_ELIGIBLE=1
+  CACHE_STATUS="miss"
+
+  if [[ -f "$CACHE_ENTRY_DIR/summary.json" && -f "$CACHE_ENTRY_DIR/meta.json" && -f "$CACHE_ENTRY_DIR/log.txt" ]]; then
+    CACHE_HIT=1
+    CACHE_STATUS="hit"
+    return 0
+  fi
+  return 1
+}
+
+write_cached_summary() {
+  local cached_summary="$1"
+  CACHED_SUMMARY_PATH="$cached_summary" \
+  RUN_ID_ENV="$RUN_ID" \
+  SESSION_ID_ENV="$SESSION_ID" \
+  START_ISO_ENV="$START_ISO" \
+  END_ISO_ENV="$END_ISO" \
+  ELAPSED_ENV="$ELAPSED" \
+  CODEX_EXIT_ENV="$CODEX_EXIT" \
+  LOG_FILE_ENV="$LOG_FILE" \
+  META_FILE_ENV="$META_FILE" \
+  CACHE_KEY_ENV="$CACHE_KEY" \
+  CACHE_DIR_ENV="$CACHE_ENTRY_DIR" \
+  python3 - <<'PY' > "$SUMMARY_PATH"
 import json
 import os
-from datetime import datetime, timezone
+from pathlib import Path
 
+cached_path = Path(os.environ["CACHED_SUMMARY_PATH"])
+run_id = os.environ["RUN_ID_ENV"]
+session_id = os.environ.get("SESSION_ID_ENV") or None
+start = os.environ["START_ISO_ENV"]
+end = os.environ["END_ISO_ENV"]
+elapsed = int(os.environ.get("ELAPSED_ENV", "0"))
+exit_code = int(os.environ.get("CODEX_EXIT_ENV", "0"))
+log_file = os.environ["LOG_FILE_ENV"]
+meta_file = os.environ["META_FILE_ENV"]
+cache_key = os.environ.get("CACHE_KEY_ENV")
+cache_dir = os.environ.get("CACHE_DIR_ENV")
 
-def nullable(name: str):
-    value = os.environ.get(name, "")
-    if value == "" or value == "unknown":
-        return None
-    return value
+try:
+    base = json.loads(cached_path.read_text(encoding="utf-8"))
+except Exception:
+    base = {}
+if not isinstance(base, dict):
+    base = {}
 
+base["id"] = run_id
+base["sid"] = session_id
+base["start"] = start
+base["end"] = end
+base["time"] = elapsed
+base["exit"] = exit_code
+base["ok"] = exit_code == 0
+base["log"] = log_file
+base["meta"] = meta_file
+base["cache"] = {"status": "hit", "key": cache_key, "dir": cache_dir}
 
-def nullable_int(name: str):
-    value = os.environ.get(name, "")
-    if value == "":
-        return None
-    return int(value)
+legacy = base.get("legacy")
+if not isinstance(legacy, dict):
+    legacy = {}
+legacy["run_id"] = run_id
+legacy["session_id"] = session_id
+legacy["started_at"] = start
+legacy["ended_at"] = end
+legacy["elapsed_seconds"] = elapsed
+legacy["exit_code"] = exit_code
+legacy["success"] = exit_code == 0
+legacy["log_file"] = log_file
+legacy["meta_file"] = meta_file
+legacy["cache_status"] = "hit"
+legacy["cache_key"] = cache_key
+base["legacy"] = legacy
 
-
-obj = {
-    "event": os.environ["EVENT_NAME"],
-    "status": os.environ["EVENT_STATUS"],
-    "run_id": os.environ["EVENT_RUN_ID"],
-    "session_id": nullable("EVENT_SESSION_ID"),
-    "repo": nullable("EVENT_REPO"),
-    "mode": nullable("EVENT_MODE"),
-    "exit_code": nullable_int("EVENT_EXIT"),
-    "log_file": nullable("EVENT_LOG_FILE"),
-    "meta_file": nullable("EVENT_META_FILE"),
-    "summary_file": nullable("EVENT_SUMMARY_FILE"),
-    "started_at": nullable("EVENT_STARTED_AT"),
-    "ended_at": nullable("EVENT_ENDED_AT"),
-    "elapsed_seconds": nullable_int("EVENT_ELAPSED"),
-    "source": "run_codex_task.sh",
-    "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-}
-print(json.dumps(obj, ensure_ascii=True))
+print(json.dumps(base, ensure_ascii=True, separators=(",", ":")))
 PY
+}
+
+load_cache_hit_metadata() {
+  local cached_summary="$1"
+  read -r CODEX_EXIT SESSION_ID < <(
+    python3 - "$cached_summary" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+exit_code = 0
+session = "unknown"
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        raw_exit = data.get("exit")
+        if raw_exit is None and isinstance(data.get("legacy"), dict):
+            raw_exit = data["legacy"].get("exit_code")
+        if isinstance(raw_exit, int):
+            exit_code = raw_exit
+        raw_session = data.get("sid")
+        if raw_session is None and isinstance(data.get("legacy"), dict):
+            raw_session = data["legacy"].get("session_id")
+        if isinstance(raw_session, str) and raw_session:
+            session = raw_session
+except Exception:
+    pass
+print(f"{exit_code} {session}")
+PY
+  )
+}
+
+persist_cache_entry() {
+  if [[ "$CACHE_ELIGIBLE" -ne 1 || "$CACHE_ENABLED" -ne 1 || "$CACHE_HIT" -eq 1 ]]; then
+    return
+  fi
+  if [[ "$CODEX_EXIT" -ne 0 ]]; then
+    return
+  fi
+  if [[ -z "$CACHE_ENTRY_DIR" ]]; then
+    return
+  fi
+  mkdir -p "$CACHE_ENTRY_DIR"
+  cp "$SUMMARY_PATH" "$CACHE_ENTRY_DIR/summary.json"
+  cp "$META_FILE" "$CACHE_ENTRY_DIR/meta.json"
+  cp "$LOG_FILE" "$CACHE_ENTRY_DIR/log.txt"
+  CACHE_STATUS="stored"
+}
+
+summary_report_path() {
+  if [[ -n "$JSON_OUT" ]]; then
+    printf '%s' "$JSON_OUT"
+    return
+  fi
+  printf '%s' "$SUMMARY_PATH"
+}
+
+generate_one_line_summary() {
+  if [[ "$SUMMARIZE" -ne 1 ]]; then
+    return
+  fi
+
+  local report_path
+  report_path="$(summary_report_path)"
+  if [[ ! -f "$report_path" ]]; then
+    return
+  fi
+  if [[ ! -f "$SUMMARIZER" ]]; then
+    echo "Warning: summarizer script not found: $SUMMARIZER" >&2
+    return
+  fi
+
+  local cmd=()
+  if [[ -x "$SUMMARIZER" ]]; then
+    cmd=("$SUMMARIZER" --summary "$report_path")
+  else
+    cmd=(python3 "$SUMMARIZER" --summary "$report_path")
+  fi
+
+  set +e
+  SUMMARY_LINE="$("${cmd[@]}" 2>/dev/null)"
+  local summarize_exit=$?
+  set -e
+  if [[ "$summarize_exit" -ne 0 ]]; then
+    SUMMARY_LINE=""
+    echo "Warning: one-line summarizer failed with exit $summarize_exit" >&2
+    return
+  fi
+  SUMMARY_LINE="$(printf '%s' "$SUMMARY_LINE" | head -n1)"
 }
 
 emit_event() {
@@ -132,6 +584,333 @@ emit_event() {
   fi
 }
 
+make_event_json() {
+  local event_name="$1"
+  local event_status="$2"
+  local event_exit="${3:-}"
+
+  EVENT_NAME="$event_name" \
+  EVENT_STATUS="$event_status" \
+  EVENT_EXIT="$event_exit" \
+  EVENT_RUN_ID="$RUN_ID" \
+  EVENT_SESSION_ID="$SESSION_ID" \
+  EVENT_REPO="$REPO" \
+  EVENT_MODE="$MODE" \
+  EVENT_LOG_FILE="$LOG_FILE" \
+  EVENT_META_FILE="$META_FILE" \
+  EVENT_SUMMARY_FILE="$SUMMARY_PATH" \
+  EVENT_STARTED_AT="$START_ISO" \
+  EVENT_ENDED_AT="$END_ISO" \
+  EVENT_ELAPSED="$ELAPSED" \
+  python3 - <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+
+
+def nullable(name: str):
+    value = os.environ.get(name, "")
+    if value in ("", "unknown"):
+        return None
+    return value
+
+
+def nullable_int(name: str):
+    value = os.environ.get(name, "")
+    if value == "":
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+obj = {
+    "event": os.environ["EVENT_NAME"],
+    "status": os.environ["EVENT_STATUS"],
+    "run_id": nullable("EVENT_RUN_ID"),
+    "session_id": nullable("EVENT_SESSION_ID"),
+    "repo": nullable("EVENT_REPO"),
+    "mode": nullable("EVENT_MODE"),
+    "exit_code": nullable_int("EVENT_EXIT"),
+    "log_file": nullable("EVENT_LOG_FILE"),
+    "meta_file": nullable("EVENT_META_FILE"),
+    "summary_file": nullable("EVENT_SUMMARY_FILE"),
+    "started_at": nullable("EVENT_STARTED_AT"),
+    "ended_at": nullable("EVENT_ENDED_AT"),
+    "elapsed_seconds": nullable_int("EVENT_ELAPSED"),
+    "source": "run_codex_task.sh",
+    "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+}
+print(json.dumps(obj, ensure_ascii=True))
+PY
+}
+
+write_meta_file() {
+  RUN_ID_ENV="$RUN_ID" \
+  SESSION_ID_ENV="$SESSION_ID" \
+  REPO_ENV="$REPO" \
+  TASK_ENV="$TASK" \
+  RESUME_SESSION_ENV="$RESUME_SESSION" \
+  CODEX_BIN_ENV="$CODEX_BIN" \
+  LOG_FILE_ENV="$LOG_FILE" \
+  META_FILE_ENV="$META_FILE" \
+  START_ISO_ENV="$START_ISO" \
+  END_ISO_ENV="$END_ISO" \
+  ELAPSED_ENV="$ELAPSED" \
+  CODEX_EXIT_ENV="$CODEX_EXIT" \
+  MODEL_SELECTED_ENV="$MODEL_SELECTED" \
+  MODEL_TIER_ENV="$MODEL_TIER" \
+  MODEL_SOURCE_ENV="$MODEL_SOURCE" \
+  CACHE_STATUS_ENV="$CACHE_STATUS" \
+  CACHE_KEY_ENV="$CACHE_KEY" \
+  SUMMARY_LINE_ENV="$SUMMARY_LINE" \
+  python3 - <<'PY' > "$META_FILE"
+import json
+import os
+
+session_id = os.environ.get("SESSION_ID_ENV") or "unknown"
+obj = {
+    "run_id": os.environ.get("RUN_ID_ENV"),
+    "session_id": None if session_id == "unknown" else session_id,
+    "repo": os.environ.get("REPO_ENV"),
+    "task": os.environ.get("TASK_ENV") or None,
+    "resume_session": os.environ.get("RESUME_SESSION_ENV") or None,
+    "codex_bin": os.environ.get("CODEX_BIN_ENV"),
+    "log_file": os.environ.get("LOG_FILE_ENV"),
+    "meta_file": os.environ.get("META_FILE_ENV"),
+    "started_at": os.environ.get("START_ISO_ENV"),
+    "ended_at": os.environ.get("END_ISO_ENV"),
+    "elapsed_seconds": int(os.environ.get("ELAPSED_ENV", "0")),
+    "exit_code": int(os.environ.get("CODEX_EXIT_ENV", "1")),
+    "model": os.environ.get("MODEL_SELECTED_ENV") or None,
+    "model_tier": os.environ.get("MODEL_TIER_ENV") or None,
+    "model_source": os.environ.get("MODEL_SOURCE_ENV") or None,
+    "cache_status": os.environ.get("CACHE_STATUS_ENV") or None,
+    "cache_key": os.environ.get("CACHE_KEY_ENV") or None,
+    "one_line_summary": os.environ.get("SUMMARY_LINE_ENV") or None,
+}
+print(json.dumps(obj, ensure_ascii=True, indent=2))
+PY
+}
+
+write_fallback_summary() {
+  local err_msg="$1"
+  RUN_ID_ENV="$RUN_ID" \
+  SESSION_ID_ENV="$SESSION_ID" \
+  REPO_ENV="$REPO" \
+  TASK_ENV="$TASK" \
+  RESUME_SESSION_ENV="$RESUME_SESSION" \
+  START_ISO_ENV="$START_ISO" \
+  END_ISO_ENV="$END_ISO" \
+  ELAPSED_ENV="$ELAPSED" \
+  CODEX_EXIT_ENV="$CODEX_EXIT" \
+  MODEL_SELECTED_ENV="$MODEL_SELECTED" \
+  MODEL_TIER_ENV="$MODEL_TIER" \
+  MODEL_SOURCE_ENV="$MODEL_SOURCE" \
+  CACHE_STATUS_ENV="$CACHE_STATUS" \
+  CACHE_KEY_ENV="$CACHE_KEY" \
+  LOG_FILE_ENV="$LOG_FILE" \
+  META_FILE_ENV="$META_FILE" \
+  ERR_MSG_ENV="$err_msg" \
+  python3 - <<'PY' > "$SUMMARY_PATH"
+import json
+import os
+
+exit_code = int(os.environ.get("CODEX_EXIT_ENV", "1"))
+session_id = os.environ.get("SESSION_ID_ENV") or "unknown"
+err = os.environ.get("ERR_MSG_ENV") or None
+
+legacy = {
+    "run_id": os.environ.get("RUN_ID_ENV"),
+    "session_id": None if session_id == "unknown" else session_id,
+    "resume_session": os.environ.get("RESUME_SESSION_ENV") or None,
+    "repo": os.environ.get("REPO_ENV"),
+    "task": os.environ.get("TASK_ENV") or None,
+    "model": os.environ.get("MODEL_SELECTED_ENV") or None,
+    "model_tier": os.environ.get("MODEL_TIER_ENV") or None,
+    "model_source": os.environ.get("MODEL_SOURCE_ENV") or None,
+    "cache_status": os.environ.get("CACHE_STATUS_ENV") or None,
+    "cache_key": os.environ.get("CACHE_KEY_ENV") or None,
+    "started_at": os.environ.get("START_ISO_ENV"),
+    "ended_at": os.environ.get("END_ISO_ENV"),
+    "elapsed_seconds": int(os.environ.get("ELAPSED_ENV", "0")),
+    "exit_code": exit_code,
+    "success": exit_code == 0,
+    "log_file": os.environ.get("LOG_FILE_ENV"),
+    "meta_file": os.environ.get("META_FILE_ENV"),
+    "token_usage": {"input_tokens": None, "output_tokens": None, "total_tokens": None, "evidence": {}},
+    "cost": {"usd": None, "evidence": None},
+}
+
+obj = {
+    "id": os.environ.get("RUN_ID_ENV"),
+    "sid": None if session_id == "unknown" else session_id,
+    "repo": os.environ.get("REPO_ENV"),
+    "task": os.environ.get("TASK_ENV") or None,
+    "resume": os.environ.get("RESUME_SESSION_ENV") or None,
+    "start": os.environ.get("START_ISO_ENV"),
+    "end": os.environ.get("END_ISO_ENV"),
+    "time": int(os.environ.get("ELAPSED_ENV", "0")),
+    "exit": exit_code,
+    "ok": exit_code == 0,
+    "mdl": os.environ.get("MODEL_SELECTED_ENV") or None,
+    "tier": os.environ.get("MODEL_TIER_ENV") or None,
+    "msrc": os.environ.get("MODEL_SOURCE_ENV") or None,
+    "log": os.environ.get("LOG_FILE_ENV"),
+    "meta": os.environ.get("META_FILE_ENV"),
+    "tok": None,
+    "cost": None,
+    "err": err,
+    "cache": {
+        "status": os.environ.get("CACHE_STATUS_ENV") or None,
+        "key": os.environ.get("CACHE_KEY_ENV") or None,
+    },
+    "src": "run_codex_task.sh",
+    "legacy": legacy,
+}
+print(json.dumps(obj, ensure_ascii=True, separators=(",", ":")))
+PY
+}
+
+ensure_summary_json() {
+  local err_msg="$1"
+
+  if [[ "$SUMMARY_WRITTEN" -eq 1 ]]; then
+    return
+  fi
+
+  write_meta_file
+
+  if [[ -f "$PARSER" ]]; then
+    set +e
+    if [[ -x "$PARSER" ]]; then
+      "$PARSER" --log "$LOG_FILE" --meta "$META_FILE" > "$SUMMARY_PATH"
+    else
+      python3 "$PARSER" --log "$LOG_FILE" --meta "$META_FILE" > "$SUMMARY_PATH"
+    fi
+    local parse_exit=$?
+    set -e
+    if [[ "$parse_exit" -ne 0 ]]; then
+      write_fallback_summary "$err_msg"
+    fi
+  else
+    write_fallback_summary "$err_msg"
+  fi
+
+  if [[ -n "$JSON_OUT" ]]; then
+    mkdir -p "$(dirname "$JSON_OUT")"
+    cp "$SUMMARY_PATH" "$JSON_OUT"
+  fi
+
+  SUMMARY_WRITTEN=1
+}
+
+print_run_summary_lines() {
+  local summary_report_path="$SUMMARY_PATH"
+  summary_report_path="$(summary_report_path)"
+
+  local lines=(
+    "codex_run_id=$RUN_ID"
+    "codex_exit_code=$CODEX_EXIT"
+    "elapsed_seconds=$ELAPSED"
+    "codex_session_id=$SESSION_ID"
+    "log_file=$LOG_FILE"
+    "meta_file=$META_FILE"
+    "summary_file=$summary_report_path"
+    "model_selected=$MODEL_SELECTED"
+    "model_tier=$MODEL_TIER"
+    "model_source=$MODEL_SOURCE"
+    "cache_status=$CACHE_STATUS"
+  )
+  if [[ -n "$CACHE_KEY" ]]; then
+    lines+=("cache_key=$CACHE_KEY")
+  fi
+  if [[ -n "$SUMMARY_LINE" ]]; then
+    lines+=("summary_line=$SUMMARY_LINE")
+  fi
+
+  if [[ "$LOG_VERBOSITY" != "low" ]]; then
+    lines+=("started_at_utc=$START_ISO")
+    lines+=("ended_at_utc=$END_ISO")
+  fi
+
+  if [[ "$LOG_VERBOSITY" == "high" || "$LOG_VERBOSITY" == "extreme" ]]; then
+    lines+=("started_at_local=$START_LOCAL")
+    lines+=("ended_at_local=$END_LOCAL")
+    lines+=("script_invocation=$SCRIPT_CMD_QUOTED")
+    lines+=("codex_command=$CODEX_CMD_QUOTED")
+  fi
+
+  printf '%s\n' "${lines[@]}"
+}
+
+finish_run() {
+  local exit_code="$1"
+  local err_msg="$2"
+
+  if [[ "$FINALIZED" -eq 1 ]]; then
+    return
+  fi
+  FINALIZED=1
+
+  set +e
+
+  CODEX_EXIT="$exit_code"
+  END_EPOCH="$(date +%s)"
+  END_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  END_LOCAL="$(date +%Y-%m-%dT%H:%M:%S%z)"
+  ELAPSED=$((END_EPOCH - START_EPOCH))
+
+  SESSION_ID="$({
+    grep -i "session.*id" "$LOG_FILE" 2>/dev/null || true
+  } | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | tail -1)"
+
+  if [[ -z "$SESSION_ID" ]]; then
+    echo "Warning: Could not extract session ID from log" >&2
+    SESSION_ID="unknown"
+  fi
+
+  ensure_summary_json "$err_msg"
+  persist_cache_entry
+  generate_one_line_summary
+  write_meta_file
+
+  print_run_summary_lines | tee -a "$LOG_FILE"
+
+  if [[ "$LOG_VERBOSITY" == "low" ]]; then
+    echo "summary_json=$(cat "$SUMMARY_PATH")"
+  else
+    echo "summary_json=$(cat "$SUMMARY_PATH")" | tee -a "$LOG_FILE"
+  fi
+
+  if [[ "$RUN_COMPLETED_EVENT_EMITTED" -eq 0 ]]; then
+    if [[ "$CODEX_EXIT" -eq 0 ]]; then
+      emit_event "$(make_event_json "run_completed" "success" "$CODEX_EXIT")"
+    else
+      emit_event "$(make_event_json "run_completed" "failure" "$CODEX_EXIT")"
+    fi
+    RUN_COMPLETED_EVENT_EMITTED=1
+  fi
+
+  set -e
+}
+
+handle_signal() {
+  local sig="$1"
+  ERROR_MSG="Interrupted by signal $sig"
+  case "$sig" in
+    INT) CODEX_EXIT=130 ;;
+    TERM) CODEX_EXIT=143 ;;
+    *) CODEX_EXIT=1 ;;
+  esac
+  finish_run "$CODEX_EXIT" "$ERROR_MSG"
+  exit "$CODEX_EXIT"
+}
+
+trap 'if [[ "$IN_RUN_MODE" -eq 1 ]]; then finish_run "${CODEX_EXIT:-1}" "${ERROR_MSG:-}"; fi' EXIT
+trap 'handle_signal INT' INT
+trap 'handle_signal TERM' TERM
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
@@ -142,16 +921,16 @@ while [[ $# -gt 0 ]]; do
       TASK="${2:-}"
       shift 2
       ;;
+    --resume)
+      RESUME_SESSION="${2:-}"
+      shift 2
+      ;;
     --codex-bin)
       CODEX_BIN="${2:-}"
       shift 2
       ;;
     --log-dir)
       LOG_DIR="${2:-}"
-      shift 2
-      ;;
-    --resume)
-      RESUME_SESSION="${2:-}"
       shift 2
       ;;
     --json-out)
@@ -164,6 +943,30 @@ while [[ $# -gt 0 ]]; do
       ;;
     --event-stream)
       EVENT_STREAM="${2:-}"
+      shift 2
+      ;;
+    --doctor)
+      DOCTOR_MODE=1
+      shift
+      ;;
+    --tier)
+      MODEL_TIER="${2:-}"
+      shift 2
+      ;;
+    --no-cache)
+      CACHE_ENABLED=0
+      shift
+      ;;
+    --cache-dir)
+      CACHE_DIR="${2:-}"
+      shift 2
+      ;;
+    --summarize)
+      SUMMARIZE=1
+      shift
+      ;;
+    --summarizer)
+      SUMMARIZER="${2:-}"
       shift 2
       ;;
     --verbosity)
@@ -182,14 +985,14 @@ while [[ $# -gt 0 ]]; do
       LOG_VERBOSITY="extreme"
       shift
       ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
     --)
       shift
       EXTRA_ARGS=("$@")
       break
+      ;;
+    -h|--help)
+      usage
+      exit 0
       ;;
     *)
       echo "Unknown argument: $1" >&2
@@ -199,240 +1002,178 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$REPO" ]]; then
-  echo "Error: --repo is required." >&2
-  usage >&2
-  exit 2
-fi
-
-if [[ -z "$RESUME_SESSION" && -z "$TASK" ]]; then
-  echo "Error: --task is required (unless --resume is provided)." >&2
-  usage >&2
-  exit 2
-fi
-
 case "$LOG_VERBOSITY" in
   low|normal|high|extreme)
     ;;
   *)
-    echo "Error: --verbosity must be low, normal, high, or extreme." >&2
+    echo "Error: --verbosity must be one of low, normal, high, extreme." >&2
     exit 2
     ;;
 esac
 
+if [[ "$DOCTOR_MODE" -eq 1 ]]; then
+  run_doctor
+  exit $?
+fi
+
+IN_RUN_MODE=1
+
+if [[ -z "$REPO" ]]; then
+  echo "Error: --repo is required." >&2
+  exit 2
+fi
 if [[ ! -d "$REPO" ]]; then
-  echo "Error: repo path does not exist or is not a directory: $REPO" >&2
+  echo "Error: --repo is not a directory: $REPO" >&2
+  exit 2
+fi
+if [[ -z "$TASK" && -z "$RESUME_SESSION" ]]; then
+  echo "Error: --task is required unless --resume is provided." >&2
   exit 2
 fi
 
-if ! CODEX_BIN_PATH="$(command -v "$CODEX_BIN" 2>/dev/null)"; then
-  echo "Error: codex command not found: $CODEX_BIN" >&2
+require_env_var "CODEX_API_KEY" "Codex CLI authentication"
+if [[ -n "$NOTIFY_CMD" ]]; then
+  require_any_env_var "notification signing secret" "CODEX_WEBHOOK_SECRET" "WEBHOOK_SECRET"
+fi
+
+if ! command -v "$CODEX_BIN" >/dev/null 2>&1; then
+  echo "Error: codex binary not found: $CODEX_BIN" >&2
   exit 127
 fi
 
+if [[ ! "$CODEX_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "Error: CODEX_TIMEOUT_SECONDS must be a non-negative integer." >&2
+  exit 2
+fi
+if [[ "$CODEX_TIMEOUT_SECONDS" -gt 0 ]] && ! command -v timeout >/dev/null 2>&1; then
+  echo "Error: timeout command is required for enforcing CODEX_TIMEOUT_SECONDS." >&2
+  exit 127
+fi
+
+if [[ -z "$MODEL_TIER" ]]; then
+  MODEL_TIER="$DEFAULT_MODEL_TIER"
+fi
+case "$MODEL_TIER" in
+  low|medium|high)
+    ;;
+  *)
+    echo "Error: --tier must be low, medium, or high." >&2
+    exit 2
+    ;;
+esac
+
+EXPLICIT_MODEL="$(detect_model_arg || true)"
+if [[ -n "$EXPLICIT_MODEL" ]]; then
+  MODEL_SELECTED="$EXPLICIT_MODEL"
+  MODEL_SOURCE="explicit_model"
+else
+  MODEL_SELECTED="$(map_tier_to_model "$MODEL_TIER")"
+  if [[ "$MODEL_TIER" == "$DEFAULT_MODEL_TIER" ]]; then
+    MODEL_SOURCE="tier_default"
+  else
+    MODEL_SOURCE="tier_flag"
+  fi
+  EXTRA_ARGS+=("--model" "$MODEL_SELECTED")
+fi
+
+if [[ -n "$RESUME_SESSION" ]]; then
+  MODE="resume"
+  if [[ -n "$TASK" ]]; then
+    CODEX_CMD=("$CODEX_BIN" exec --cd "$REPO" resume "$RESUME_SESSION" "$TASK" "${EXTRA_ARGS[@]}")
+  else
+    CODEX_CMD=("$CODEX_BIN" exec --cd "$REPO" resume "$RESUME_SESSION" "${EXTRA_ARGS[@]}")
+  fi
+else
+  MODE="new"
+  CODEX_CMD=("$CODEX_BIN" exec --cd "$REPO" "$TASK" "${EXTRA_ARGS[@]}")
+fi
+
 mkdir -p "$LOG_DIR"
-RUN_ID="$(date +%Y%m%d-%H%M%S)-$$"
+RUN_ID="$(date +%Y%m%d-%H%M%S)-$(printf '%06d' "$((RANDOM % 1000000))")"
 LOG_FILE="$LOG_DIR/codex-run-$RUN_ID.log"
 META_FILE="$LOG_DIR/codex-run-$RUN_ID.meta.json"
-if [[ -n "$JSON_OUT" ]]; then
-  SUMMARY_PENDING="$JSON_OUT"
-else
-  SUMMARY_PENDING="$LOG_DIR/codex-run-$RUN_ID.summary.json"
-fi
-if [[ -n "$EVENT_STREAM" ]]; then
-  mkdir -p "$(dirname "$EVENT_STREAM")"
-fi
+SUMMARY_PATH="$LOG_DIR/codex-run-$RUN_ID.summary.json"
+
 START_EPOCH="$(date +%s)"
 START_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 START_LOCAL="$(date +%Y-%m-%dT%H:%M:%S%z)"
-SCRIPT_CMD=("$0" "${ORIGINAL_ARGS[@]}")
-if [[ -n "$RESUME_SESSION" ]]; then
-  if [[ -n "$TASK" ]]; then
-    CODEX_CMD=("$CODEX_BIN_PATH" exec --cd "$REPO" resume "$RESUME_SESSION" "$TASK" "${EXTRA_ARGS[@]}")
-  else
-    CODEX_CMD=("$CODEX_BIN_PATH" exec --cd "$REPO" resume "$RESUME_SESSION" "${EXTRA_ARGS[@]}")
-  fi
-else
-  CODEX_CMD=("$CODEX_BIN_PATH" exec --cd "$REPO" "$TASK" "${EXTRA_ARGS[@]}")
-fi
-SCRIPT_CMD_QUOTED="$(shell_join "${SCRIPT_CMD[@]}")"
+
+SCRIPT_CMD_QUOTED="$(shell_join "$0" "${ORIGINAL_ARGS[@]}")"
 CODEX_CMD_QUOTED="$(shell_join "${CODEX_CMD[@]}")"
 
-# Emit run info for background callers BEFORE execution
-cat <<EOF_PRERUN
-codex_run_id=$RUN_ID
-log_file=$LOG_FILE
-meta_file=$META_FILE
-summary_file_pending=$SUMMARY_PENDING
-EOF_PRERUN
+prepare_cache_lookup || true
 
-MODE="new"
-if [[ -n "$RESUME_SESSION" ]]; then
-  MODE="resume"
+: > "$LOG_FILE"
+{
+  echo "codex_run_id=$RUN_ID"
+  echo "log_file=$LOG_FILE"
+  echo "meta_file=$META_FILE"
+  echo "summary_file_pending=$SUMMARY_PATH"
+} | tee -a "$LOG_FILE"
+
+if [[ "$LOG_VERBOSITY" == "high" || "$LOG_VERBOSITY" == "extreme" ]]; then
+  {
+    echo "script_invocation=$SCRIPT_CMD_QUOTED"
+    echo "codex_command=$CODEX_CMD_QUOTED"
+  } >> "$LOG_FILE"
 fi
-SESSION_ID="unknown"
-END_ISO=""
-ELAPSED=""
-EVENT_SUMMARY_FILE="$SUMMARY_PENDING"
 
 emit_event "$(make_event_json "run_started" "running")"
 
-: > "$LOG_FILE"
+if [[ "$CACHE_HIT" -eq 1 ]]; then
+  END_EPOCH="$START_EPOCH"
+  END_ISO="$START_ISO"
+  END_LOCAL="$START_LOCAL"
+  ELAPSED=0
 
-if [[ "$LOG_VERBOSITY" == "high" || "$LOG_VERBOSITY" == "extreme" ]]; then
+  load_cache_hit_metadata "$CACHE_ENTRY_DIR/summary.json"
+
   {
-    echo "===== run_codex_task.sh debug preamble ====="
-    echo "timestamp_utc=$START_ISO"
-    echo "timestamp_local=$START_LOCAL"
-    echo "mode=$MODE"
-    echo "resume_session_id=${RESUME_SESSION:-none}"
-    echo "script_path=$SCRIPT_PATH"
-    echo "script_pwd=$(pwd)"
-    echo "script_invocation=$SCRIPT_CMD_QUOTED"
-    echo "script_args_count=${#ORIGINAL_ARGS[@]}"
-    echo "repo=$REPO"
-    echo "repo_abs=$(cd "$REPO" && pwd)"
-    echo "log_dir=$LOG_DIR"
-    echo "log_file=$LOG_FILE"
-    echo "meta_file=$META_FILE"
-    echo "json_out=${JSON_OUT:-}"
-    echo "codex_bin_input=$CODEX_BIN"
-    echo "codex_bin_resolved=$CODEX_BIN_PATH"
-    echo "codex_command=$CODEX_CMD_QUOTED"
-    echo "caller_user=${USER:-unknown}"
-    echo "caller_host=$(hostname 2>/dev/null || true)"
-    echo "shell=${SHELL:-unknown}"
-    echo "bash_version=${BASH_VERSION:-unknown}"
-    echo "uname=$(uname -a 2>/dev/null || true)"
-    echo "PATH=$PATH"
-    if "$CODEX_BIN_PATH" --version >/dev/null 2>&1; then
-      echo "codex_version=$("$CODEX_BIN_PATH" --version | head -n1)"
-    else
-      echo "codex_version=<unavailable>"
-    fi
-    echo "===== end preamble ====="
-  } | tee -a "$LOG_FILE"
-elif [[ "$LOG_VERBOSITY" == "normal" ]]; then
-  {
-    echo "timestamp_utc=$START_ISO"
-    echo "mode=$MODE"
-    echo "repo=$REPO"
-    echo "log_file=$LOG_FILE"
-    echo "meta_file=$META_FILE"
-    echo "summary_file_pending=$SUMMARY_PENDING"
-    echo "codex_command=$CODEX_CMD_QUOTED"
-  } | tee -a "$LOG_FILE"
-fi
+    echo "cache_hit=1"
+    echo "cache_entry=$CACHE_ENTRY_DIR"
+  } >> "$LOG_FILE"
 
-set +e
-"${CODEX_CMD[@]}" 2>&1 | tee -a "$LOG_FILE"
-CODEX_EXIT=${PIPESTATUS[0]}
-set -e
+  write_meta_file
+  write_cached_summary "$CACHE_ENTRY_DIR/summary.json"
+  SUMMARY_WRITTEN=1
 
-END_EPOCH="$(date +%s)"
-END_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-END_LOCAL="$(date +%Y-%m-%dT%H:%M:%S%z)"
-ELAPSED=$((END_EPOCH - START_EPOCH))
+  if [[ -n "$JSON_OUT" ]]; then
+    mkdir -p "$(dirname "$JSON_OUT")"
+    cp "$SUMMARY_PATH" "$JSON_OUT"
+  fi
 
-# Extract session ID with robust pattern matching (UUID, case-insensitive)
-set +e
-SESSION_ID=$(
-  grep -i "session.*id" "$LOG_FILE" 2>/dev/null |
-    grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' |
-    tail -1
-)
-set -e
-if [[ -z "$SESSION_ID" ]]; then
-  echo "Warning: Could not extract session ID from log" >&2
-  SESSION_ID="unknown"
-fi
+  generate_one_line_summary
+  write_meta_file
 
-RUN_ID_ENV="$RUN_ID" \
-SESSION_ID_ENV="$SESSION_ID" \
-REPO_ENV="$REPO" \
-TASK_ENV="$TASK" \
-RESUME_SESSION_ENV="$RESUME_SESSION" \
-CODEX_BIN_ENV="$CODEX_BIN" \
-LOG_FILE_ENV="$LOG_FILE" \
-META_FILE_ENV="$META_FILE" \
-START_ISO_ENV="$START_ISO" \
-END_ISO_ENV="$END_ISO" \
-ELAPSED_ENV="$ELAPSED" \
-CODEX_EXIT_ENV="$CODEX_EXIT" \
-python3 - <<'PY' > "$META_FILE"
-import json
-import os
-
-session_id = os.environ["SESSION_ID_ENV"]
-task = os.environ["TASK_ENV"]
-resume_session = os.environ["RESUME_SESSION_ENV"]
-
-obj = {
-    "run_id": os.environ["RUN_ID_ENV"],
-    "session_id": None if session_id == "unknown" else session_id,
-    "repo": os.environ["REPO_ENV"],
-    "task": task if task else None,
-    "resume_session": resume_session if resume_session else None,
-    "codex_bin": os.environ["CODEX_BIN_ENV"],
-    "log_file": os.environ["LOG_FILE_ENV"],
-    "meta_file": os.environ["META_FILE_ENV"],
-    "started_at": os.environ["START_ISO_ENV"],
-    "ended_at": os.environ["END_ISO_ENV"],
-    "elapsed_seconds": int(os.environ["ELAPSED_ENV"]),
-    "exit_code": int(os.environ["CODEX_EXIT_ENV"]),
-}
-print(json.dumps(obj, ensure_ascii=True, indent=2))
-PY
-
-if [[ -x "$PARSER" ]]; then
-  PARSER_CMD=("$PARSER" --log "$LOG_FILE" --meta "$META_FILE")
-else
-  PARSER_CMD=(python3 "$PARSER" --log "$LOG_FILE" --meta "$META_FILE")
-fi
-
-if [[ -n "$JSON_OUT" ]]; then
-  mkdir -p "$(dirname "$JSON_OUT")"
-  "${PARSER_CMD[@]}" > "$JSON_OUT"
-  SUMMARY_PATH="$JSON_OUT"
-else
-  SUMMARY_PATH="$LOG_DIR/codex-run-$RUN_ID.summary.json"
-  "${PARSER_CMD[@]}" > "$SUMMARY_PATH"
-fi
-EVENT_SUMMARY_FILE="$SUMMARY_PATH"
-
-SUMMARY_LINES=(
-  "codex_run_id=$RUN_ID"
-  "codex_exit_code=$CODEX_EXIT"
-  "elapsed_seconds=$ELAPSED"
-  "codex_session_id=$SESSION_ID"
-  "log_file=$LOG_FILE"
-  "meta_file=$META_FILE"
-  "summary_file=$SUMMARY_PATH"
-)
-if [[ "$LOG_VERBOSITY" != "low" ]]; then
-  SUMMARY_LINES+=("started_at_utc=$START_ISO")
-  SUMMARY_LINES+=("ended_at_utc=$END_ISO")
-fi
-if [[ "$LOG_VERBOSITY" == "high" || "$LOG_VERBOSITY" == "extreme" ]]; then
-  SUMMARY_LINES+=("started_at_local=$START_LOCAL")
-  SUMMARY_LINES+=("ended_at_local=$END_LOCAL")
-  SUMMARY_LINES+=("script_invocation=$SCRIPT_CMD_QUOTED")
-  SUMMARY_LINES+=("codex_command=$CODEX_CMD_QUOTED")
-fi
-printf '%s\n' "${SUMMARY_LINES[@]}" | tee -a "$LOG_FILE"
-
-if [[ -f "$SUMMARY_PATH" ]]; then
+  if [[ "$CODEX_EXIT" -eq 0 ]]; then
+    emit_event "$(make_event_json "run_completed" "success" "$CODEX_EXIT")"
+  else
+    emit_event "$(make_event_json "run_completed" "failure" "$CODEX_EXIT")"
+  fi
+  RUN_COMPLETED_EVENT_EMITTED=1
+  print_run_summary_lines | tee -a "$LOG_FILE"
   if [[ "$LOG_VERBOSITY" == "low" ]]; then
     echo "summary_json=$(cat "$SUMMARY_PATH")"
   else
     echo "summary_json=$(cat "$SUMMARY_PATH")" | tee -a "$LOG_FILE"
   fi
+  IN_RUN_MODE=0
+  FINALIZED=1
+  exit "$CODEX_EXIT"
 fi
 
-if [[ "$CODEX_EXIT" -eq 0 ]]; then
-  emit_event "$(make_event_json "run_completed" "success" "$CODEX_EXIT")"
+set +e
+if [[ "$CODEX_TIMEOUT_SECONDS" -gt 0 ]]; then
+  timeout -s TERM "$CODEX_TIMEOUT_SECONDS" "${CODEX_CMD[@]}" 2>&1 | tee -a "$LOG_FILE"
+  CODEX_EXIT=${PIPESTATUS[0]}
+  if [[ "$CODEX_EXIT" -eq 124 ]]; then
+    ERROR_MSG="Codex run timed out after ${CODEX_TIMEOUT_SECONDS}s"
+  fi
 else
-  emit_event "$(make_event_json "run_completed" "failure" "$CODEX_EXIT")"
+  "${CODEX_CMD[@]}" 2>&1 | tee -a "$LOG_FILE"
+  CODEX_EXIT=${PIPESTATUS[0]}
 fi
+set -e
 
+finish_run "$CODEX_EXIT" "$ERROR_MSG"
 exit "$CODEX_EXIT"

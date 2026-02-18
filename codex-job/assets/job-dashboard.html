@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Job Queue</title>
+  <style>
+    :root {
+      --bg: #0a0d18;
+      --panel: #0f172a;
+      --panel-2: #111c34;
+      --border: #1f2a44;
+      --accent: #7dd3fc;
+      --accent-2: #c084fc;
+      --text: #e9eef7;
+      --muted: #8fa3c5;
+      --danger: #f57c9f;
+      --success: #7be0b5;
+      --warn: #f4c27a;
+      font-family: 'Inter', 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    body {
+      margin: 0;
+      padding: 1.5rem clamp(1rem, 3vw, 2rem);
+      background:
+        radial-gradient(circle at 15% 20%, rgba(192,132,252,0.15), transparent 32%),
+        radial-gradient(circle at 80% 0%, rgba(125,211,252,0.12), transparent 28%),
+        var(--bg);
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.8rem;
+      margin-bottom: 1rem;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      letter-spacing: 0.02em;
+    }
+    .tag {
+      padding: 0.35rem 0.7rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #0c1324;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.9rem;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    }
+    .card h3 {
+      margin: 0 0 0.25rem;
+      font-size: 0.95rem;
+      color: var(--muted);
+      letter-spacing: 0.01em;
+    }
+    .big {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .small {
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 0.65rem 0.75rem;
+      text-align: left;
+      font-size: 0.92rem;
+    }
+    th {
+      background: var(--panel-2);
+      color: #9fb5ff;
+      border-bottom: 1px solid var(--border);
+      letter-spacing: 0.01em;
+    }
+    tr:nth-child(2n) td {
+      background: #0d1425;
+    }
+    tr:hover td {
+      background: #101a30;
+    }
+    .status {
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      text-transform: capitalize;
+      border: 1px solid transparent;
+      display: inline-block;
+    }
+    .status.running { background: #1b2f52; border-color: #284a82; color: #b7d3ff; }
+    .status.completed { background: #123025; border-color: #1c6046; color: #92f0ba; }
+    .status.failed { background: #361523; border-color: #632a43; color: #f5b0c3; }
+    .status.cached { background: #2a1f3f; border-color: #463367; color: #d3c4ff; }
+    .status.pending { background: #2b2f3e; border-color: #43495e; color: #d7deef; }
+    .pill {
+      background: #12192d;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.45rem 0.65rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .flex {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .dot {
+      display: inline-block;
+      width: 0.65rem;
+      height: 0.65rem;
+      border-radius: 50%;
+      margin-right: 0.35rem;
+    }
+    .dot.green { background: var(--success); box-shadow: 0 0 0 4px rgba(123,224,181,0.12); }
+    .dot.red { background: var(--danger); box-shadow: 0 0 0 4px rgba(245,124,159,0.12); }
+    .dot.gray { background: #9fa8bf; box-shadow: 0 0 0 4px rgba(159,168,191,0.12); }
+    .timestamp { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Codex Job Queue</h1>
+    <div class="tag" id="header-state">Connecting…</div>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Total Jobs</h3>
+      <div class="big" id="count-total">—</div>
+      <div class="small" id="db-path">db: —</div>
+    </div>
+    <div class="card">
+      <h3>Running</h3>
+      <div class="big" id="count-running">—</div>
+      <div class="small">active executions</div>
+    </div>
+    <div class="card">
+      <h3>Completed</h3>
+      <div class="big" id="count-completed">—</div>
+      <div class="small">successful runs</div>
+    </div>
+    <div class="card">
+      <h3>Failed</h3>
+      <div class="big" id="count-failed">—</div>
+      <div class="small">needs attention</div>
+    </div>
+  </div>
+
+  <div class="card flex" style="margin-bottom:0.75rem;">
+    <div class="pill"><span class="dot green"></span><span id="last-updated">Awaiting first pull…</span></div>
+    <div class="pill"><span class="dot gray"></span>Auto-refresh every 5s</div>
+    <div class="pill"><span class="dot red"></span><span id="error-area" aria-live="polite"></span></div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Status</th>
+        <th>Task</th>
+        <th>Repo</th>
+        <th>Run</th>
+        <th>Session</th>
+        <th>Started</th>
+        <th>Ended</th>
+        <th>Cache</th>
+      </tr>
+    </thead>
+    <tbody id="jobs-body"></tbody>
+  </table>
+
+  <script>
+    const jobsBody = document.getElementById('jobs-body');
+    const headerState = document.getElementById('header-state');
+    const lastUpdated = document.getElementById('last-updated');
+    const dbPath = document.getElementById('db-path');
+    const errorArea = document.getElementById('error-area');
+
+    const counters = {
+      total: document.getElementById('count-total'),
+      running: document.getElementById('count-running'),
+      completed: document.getElementById('count-completed'),
+      failed: document.getElementById('count-failed'),
+    };
+
+    const fmt = iso => iso ? new Date(iso).toLocaleString() : '—';
+
+    const renderRows = (jobs) => {
+      jobsBody.innerHTML = jobs.map(job => `
+        <tr>
+          <td>${job.id}</td>
+          <td><span class="status ${job.status}">${job.status}</span></td>
+          <td>${job.task || ''}</td>
+          <td>${job.repo || ''}</td>
+          <td>${job.run_id || ''}</td>
+          <td>${job.session_id || ''}</td>
+          <td class="timestamp">${fmt(job.started_at || job.created_at)}</td>
+          <td class="timestamp">${fmt(job.completed_at)}</td>
+          <td>${job.cache_status || ''}</td>
+        </tr>
+      `).join('');
+    };
+
+    const renderCounters = (jobs) => {
+      const counts = jobs.reduce((acc, j) => {
+        acc[j.status] = (acc[j.status] || 0) + 1;
+        acc.total = (acc.total || 0) + 1;
+        return acc;
+      }, {});
+      counters.total.textContent = counts.total || 0;
+      counters.running.textContent = counts.running || 0;
+      counters.completed.textContent = counts.completed || 0;
+      counters.failed.textContent = counts.failed || 0;
+    };
+
+    const refresh = async () => {
+      headerState.textContent = 'Refreshing…';
+      errorArea.textContent = '';
+      try {
+        const res = await fetch('/api/jobs');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        renderRows(data.jobs || []);
+        renderCounters(data.jobs || []);
+        headerState.textContent = 'Live';
+        lastUpdated.textContent = `Updated ${new Date(data.generated_at).toLocaleTimeString()}`;
+        dbPath.textContent = `db: ${data.db_path}`;
+      } catch (err) {
+        headerState.textContent = 'Error';
+        errorArea.textContent = err.message;
+      }
+    };
+
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,77 @@
+{
+  "schema_version": "run_state_machine.v1",
+  "initial_state": "queued",
+  "states": [
+    "queued",
+    "claimed",
+    "running",
+    "waiting_approval",
+    "retry_scheduled",
+    "completed",
+    "failed",
+    "canceled"
+  ],
+  "terminal_states": [
+    "completed",
+    "failed",
+    "canceled"
+  ],
+  "transitions": [
+    {
+      "from": "queued",
+      "to": "claimed"
+    },
+    {
+      "from": "claimed",
+      "to": "running"
+    },
+    {
+      "from": "running",
+      "to": "waiting_approval"
+    },
+    {
+      "from": "waiting_approval",
+      "to": "running"
+    },
+    {
+      "from": "waiting_approval",
+      "to": "failed"
+    },
+    {
+      "from": "running",
+      "to": "retry_scheduled"
+    },
+    {
+      "from": "retry_scheduled",
+      "to": "queued"
+    },
+    {
+      "from": "running",
+      "to": "completed"
+    },
+    {
+      "from": "running",
+      "to": "failed"
+    },
+    {
+      "from": "queued",
+      "to": "canceled"
+    },
+    {
+      "from": "claimed",
+      "to": "canceled"
+    },
+    {
+      "from": "running",
+      "to": "canceled"
+    },
+    {
+      "from": "waiting_approval",
+      "to": "canceled"
+    },
+    {
+      "from": "retry_scheduled",
+      "to": "canceled"
+    }
+  ]
+}

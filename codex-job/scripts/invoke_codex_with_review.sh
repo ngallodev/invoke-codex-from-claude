@@ -18,6 +18,8 @@ EVENT_STREAM=""
 CODEX_BIN=""
 LOG_DIR=""
 LOG_VERBOSITY=""
+SUMMARIZE=1
+SUMMARIZER=""
 EXTRA_ARGS=()
 SHOW_HELP=0
 
@@ -49,6 +51,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --verbosity)
       LOG_VERBOSITY="${2:-}"
+      shift 2
+      ;;
+    --summarize)
+      SUMMARIZE=1
+      shift
+      ;;
+    --no-summarize)
+      SUMMARIZE=0
+      shift
+      ;;
+    --summarizer)
+      SUMMARIZER="${2:-}"
       shift 2
       ;;
     -v)
@@ -202,6 +216,12 @@ fi
 if [[ -n "$LOG_VERBOSITY" ]]; then
   RUNNER_ARGS+=(--verbosity "$LOG_VERBOSITY")
 fi
+if [[ "$SUMMARIZE" -eq 1 ]]; then
+  RUNNER_ARGS+=(--summarize)
+fi
+if [[ -n "$SUMMARIZER" ]]; then
+  RUNNER_ARGS+=(--summarizer "$SUMMARIZER")
+fi
 if [[ "${#EXTRA_ARGS[@]}" -gt 0 ]]; then
   RUNNER_ARGS+=(-- "${EXTRA_ARGS[@]}")
 fi
@@ -296,6 +316,12 @@ if [[ "$EXIT_CODE" -ne 0 ]]; then
   fi
   if [[ -n "$LOG_VERBOSITY" ]]; then
     REVIEW_ARGS+=(--verbosity "$LOG_VERBOSITY")
+  fi
+  if [[ "$SUMMARIZE" -eq 1 ]]; then
+    REVIEW_ARGS+=(--summarize)
+  fi
+  if [[ -n "$SUMMARIZER" ]]; then
+    REVIEW_ARGS+=(--summarizer "$SUMMARIZER")
   fi
   if [[ "${#EXTRA_ARGS[@]}" -gt 0 ]]; then
     REVIEW_ARGS+=(-- "${EXTRA_ARGS[@]}")
