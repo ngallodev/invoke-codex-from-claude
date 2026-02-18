@@ -5,6 +5,7 @@ Owner: `invoke-codex-from-claude` maintainers
 Architecture ADR: `docs/ADR-0001-control-plane-core-architecture.md`
 Language ADR: `docs/ADR-0002-control-plane-language-selection.md`
 Persistence/Queue ADR: `docs/ADR-0003-persistence-and-queue-strategy.md`
+Contracts ADR: `docs/ADR-0004-event-schema-and-state-machine.md`
 
 ## Why This Exists
 This repo started as command wrappers, evolved into a skill, and is now moving toward an application.
