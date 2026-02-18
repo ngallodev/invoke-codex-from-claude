@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  install.sh --scope <project|user|global> [--uninstall]
+
+Options:
+  --scope <project|user|global> Install scope (required)
+  --uninstall             Remove the skill instead of installing
+  -h, --help              Show this help text
+USAGE
+}
+
+# Define all scripts to be installed in the shared directory
+ALL_SCRIPTS=(
+  "invoke_codex_with_review.sh"
+  "run_codex_task.sh"
+  "parse_codex_run.py"
+  "invoke_gemini_with_review.sh"
+  "run_gemini_task.sh"
+  "parse_gemini_run.py"
+  "notify_claude_hook.sh"
+  "notify_terminal.sh"
+  "verify_codex_work.sh"
+)
+
+# ... existing code ...
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCOPE=""
+UNINSTALL=0
+
+# The unified skill name
+SKILL_NAME="codex-job"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --scope)
+      SCOPE="${2:-}"
+      shift 2
+      ;;
+    --uninstall)
+      UNINSTALL=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -z "$SCOPE" ]]; then
+  echo "Error: --scope is required." >&2
+  usage >&2
+  exit 2
+fi
+
+case "$SCOPE" in
+  project)
+    DEST_CLAUDE_ROOT="$SCRIPT_DIR/.claude"
+    ;;
+  user|global)
+    DEST_CLAUDE_ROOT="$HOME/.claude"
+    ;;
+  *)
+    echo "Error: --scope must be project, user, or global." >&2
+    exit 2
+    ;;
+esac
+
+DEST_SKILLS_ROOT="$DEST_CLAUDE_ROOT/skills"
+DEST_SCRIPTS_ROOT="$DEST_CLAUDE_ROOT/scripts"
+DEST_SKILL="$DEST_SKILLS_ROOT/$SKILL_NAME"
+
+if [[ "$UNINSTALL" -eq 1 ]]; then
+  if [[ -d "$DEST_SKILL" ]]; then
+    rm -rf "$DEST_SKILL"
+    echo "Removed skill: $DEST_SKILL"
+  fi
+  
+  # Remove the other skill if it was there from old installs
+  if [[ -d "$DEST_SKILLS_ROOT/gemini-job" ]]; then
+    rm -rf "$DEST_SKILLS_ROOT/gemini-job"
+    echo "Removed legacy skill: gemini-job"
+  fi
+
+  for script_name in "${ALL_SCRIPTS[@]}"; do
+    target="$DEST_SCRIPTS_ROOT/$script_name"
+    if [[ -f "$target" ]]; then
+      rm -f "$target"
+      echo "Removed script: $target"
+    fi
+  done
+  exit 0
+fi
+
+# 1. Install All Scripts to Shared Directory
+mkdir -p "$DEST_SCRIPTS_ROOT"
+for script_name in "${ALL_SCRIPTS[@]}"; do
+  src="$SCRIPT_DIR/scripts/$script_name"
+  dest="$DEST_SCRIPTS_ROOT/$script_name"
+  
+  if [[ ! -f "$src" ]]; then
+    echo "Warning: missing source script, skipping: $src" >&2
+    continue
+  fi
+
+  cp "$src" "$dest"
+  chmod +x "$dest"
+  echo "Installed script to shared directory: $dest"
+done
+
+# 2. Install Unified Skill (entire folder including assets, tools, etc.)
+SKILL_SRC="$SCRIPT_DIR/.claude/skills/$SKILL_NAME"
+
+if [[ ! -d "$SKILL_SRC" ]]; then
+  echo "Error: skill source not found: $SKILL_SRC" >&2
+  exit 2
+fi
+
+mkdir -p "$DEST_SKILLS_ROOT"
+if [[ -d "$DEST_SKILL" ]]; then
+  rm -rf "$DEST_SKILL"
+fi
+
+# Copy the entire skill directory
+cp -R "$SKILL_SRC" "$DEST_SKILL"
+echo "Installed unified skill (including resources): $DEST_SKILL"
+
+# Remove the scripts folder from the destination if it was copied (as scripts are shared)
+if [[ -d "$DEST_SKILL/scripts" ]]; then
+  rm -rf "$DEST_SKILL/scripts"
+fi
