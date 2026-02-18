@@ -121,6 +121,7 @@ PY
 
 ## Testing
 - Core agents metadata: `tests/test_agents_metadata.sh`
+- Event/schema contracts: `tests/test_contract_schemas.sh`
 - Codex runner + parser: `tests/test_runner_and_parser.sh`
 - Gemini runner + parser: `tests/test_gemini_runner_and_parser.sh`
 - Invoke + notify + review flow: `tests/test_invoke_and_notify.sh`
