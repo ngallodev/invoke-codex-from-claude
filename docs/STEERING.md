@@ -3,6 +3,7 @@
 Last updated: 2026-02-18
 Owner: `invoke-codex-from-claude` maintainers
 Architecture ADR: `docs/ADR-0001-control-plane-core-architecture.md`
+Language ADR: `docs/ADR-0002-control-plane-language-selection.md`
 
 ## Why This Exists
 This repo started as command wrappers, evolved into a skill, and is now moving toward an application.
