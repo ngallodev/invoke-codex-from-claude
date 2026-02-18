@@ -7,3 +7,7 @@ ui/dist/
 ui/.vite/
 ui/test-results/
 ui/playwright-report/
+
+ui/*.tsbuildinfo
+ui/*.d.ts
+ui/*.js
