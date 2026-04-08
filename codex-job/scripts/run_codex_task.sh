@@ -5,12 +5,13 @@ umask 077
 usage() {
   cat <<'USAGE'
 Usage:
-  run_codex_task.sh --repo <path> [--task <text>] [--resume <session>] [options] [-- <extra codex args...>]
+  run_codex_task.sh --repo <path> [--task <text> | --task-file <path>] [--resume <session>] [options] [-- <extra codex args...>]
 
 Options:
   --repo <path>         Repository/workdir for codex exec --cd (required)
   --doctor              Run environment diagnostics and exit
   --task <text>         Task prompt for Codex (required unless --resume is used)
+  --task-file <path>    Read task prompt from file (mutually exclusive with --task)
   --resume <session>    Resume an existing Codex session by ID (optional)
   --codex-bin <path>    Codex binary/command (default: codex)
   --log-dir <path>      Directory for logs/metadata (default: ./runs)
@@ -80,6 +81,7 @@ DOCTOR_WARNINGS=0
 
 REPO=""
 TASK=""
+TASK_FILE=""
 RESUME_SESSION=""
 CODEX_BIN="codex"
 LOG_DIR="./runs"
@@ -650,6 +652,7 @@ write_meta_file() {
   SESSION_ID_ENV="$SESSION_ID" \
   REPO_ENV="$REPO" \
   TASK_ENV="$TASK" \
+  TASK_FILE_ENV="$TASK_FILE" \
   RESUME_SESSION_ENV="$RESUME_SESSION" \
   CODEX_BIN_ENV="$CODEX_BIN" \
   LOG_FILE_ENV="$LOG_FILE" \
@@ -674,6 +677,7 @@ obj = {
     "session_id": None if session_id == "unknown" else session_id,
     "repo": os.environ.get("REPO_ENV"),
     "task": os.environ.get("TASK_ENV") or None,
+    "task_file": os.environ.get("TASK_FILE_ENV", "") or None,
     "resume_session": os.environ.get("RESUME_SESSION_ENV") or None,
     "codex_bin": os.environ.get("CODEX_BIN_ENV"),
     "log_file": os.environ.get("LOG_FILE_ENV"),
@@ -921,6 +925,10 @@ while [[ $# -gt 0 ]]; do
       TASK="${2:-}"
       shift 2
       ;;
+    --task-file)
+      TASK_FILE="${2:-}"
+      shift 2
+      ;;
     --resume)
       RESUME_SESSION="${2:-}"
       shift 2
@@ -1025,6 +1033,17 @@ fi
 if [[ ! -d "$REPO" ]]; then
   echo "Error: --repo is not a directory: $REPO" >&2
   exit 2
+fi
+if [[ -n "$TASK" && -n "$TASK_FILE" ]]; then
+  echo "Error: --task and --task-file are mutually exclusive" >&2
+  exit 2
+fi
+if [[ -n "$TASK_FILE" ]]; then
+  if [[ ! -f "$TASK_FILE" ]]; then
+    echo "Error: --task-file path does not exist: $TASK_FILE" >&2
+    exit 2
+  fi
+  TASK="$(cat "$TASK_FILE")"
 fi
 if [[ -z "$TASK" && -z "$RESUME_SESSION" ]]; then
   echo "Error: --task is required unless --resume is provided." >&2

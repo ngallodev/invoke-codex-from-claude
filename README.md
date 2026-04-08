@@ -15,11 +15,11 @@ Quickstart: see `README-TLDR.md` for the shortest install/setup/use path.
 
 ## Installation
 - Install the skill into your preferred scope:
-  - Project-local: `./install.sh --scope project`
-  - User/global: `./install.sh --scope user`
+  - Project-local: `./install_codex_job_skill.sh --scope project`
+  - User/global: `./install_codex_job_skill.sh --scope user`
 - Preview without changes: append `--dry-run`.
 - Deferred Phase 2/3 runtime scripts (queue/dashboard) are opt-in: add `--include-experimental`.
-- Uninstall: `./uninstall.sh --scope user` (add `--dry-run` to preview).
+- Uninstall: `./uninstall_codex_job_skill.sh --scope user` (add `--dry-run` to preview).
 - Skill assets live in `.claude/skills/codex-job/`; runtime scripts are copied into that skill’s `scripts/` directory. PATH edits are wrapped in tagged blocks for safe re-run and removal.
 
 ## End-to-End Example (Codex)
@@ -140,4 +140,4 @@ PY
 - Run from repo root: `bash tests/test_runner_and_parser.sh` (tests create their own temp repos and fake CLIs).
 
 ## Uninstall
-`./uninstall.sh --scope user` removes the installed skill and legacy root-level scripts; add `--dry-run` to preview.
+`./uninstall_codex_job_skill.sh --scope user` removes the installed skill and legacy root-level scripts; add `--dry-run` to preview.

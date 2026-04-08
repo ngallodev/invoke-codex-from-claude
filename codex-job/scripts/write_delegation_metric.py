@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -16,6 +17,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out", default="delegation-metrics.jsonl", help="JSONL output path")
     parser.add_argument("--task-type", required=True)
     parser.add_argument("--risk", required=True, choices=["low", "medium", "high"])
+    parser.add_argument("--ticket-id", default="", help="Ticket identifier, e.g. P4-001")
     parser.add_argument("--delegated", default="true", choices=["true", "false"])
     parser.add_argument("--reason-if-not-delegated", default="")
     parser.add_argument("--claude-model", required=True)
@@ -25,6 +27,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--status", choices=["success", "partial", "failure"])
     parser.add_argument("--failure-class", choices=["environment", "spec", "execution"], default=None)
     parser.add_argument("--retry-count", type=int, default=0)
+    parser.add_argument(
+        "--files-changed",
+        default="",
+        help="Comma-separated list of files written/modified by the delegate",
+    )
     parser.add_argument("--delegated-model", required=True, help="The model used by the delegate (Codex/Gemini)")
     parser.add_argument("--provider", choices=["codex", "gemini"], default="codex", help="LLM provider for token recording")
     return parser.parse_args()
@@ -57,6 +64,27 @@ def _pick(summary: Mapping[str, Any], primary: str, legacy: str | None = None, d
     return default
 
 
+def append_work_log(out_path: Path, record: Mapping[str, Any], task_type: str) -> None:
+    work_log_path = out_path.parent / "work-log.md"
+    identifier = str(record.get("ticket_id") or task_type)
+    timestamp = str(record.get("timestamp") or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    delegated_model = str(record.get("delegated_model") or "")
+    status = str(record.get("status") or "failure")
+    duration_sec = int(_as_number(record.get("duration_sec"), 0.0))
+    total_tokens = _as_int(record.get("codex_tokens_total"), 0)
+    line = (
+        f"{timestamp} | {identifier} | {delegated_model} | {status} | "
+        f"{duration_sec}s | {total_tokens} tokens\n"
+    )
+    try:
+        if not work_log_path.exists():
+            work_log_path.write_text("# Delegation Work Log\n", encoding="utf-8")
+        with work_log_path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+    except OSError as exc:
+        print(f"Warning: failed to append work log at {work_log_path}: {exc}", file=sys.stderr)
+
+
 def main() -> int:
     args = parse_args()
     summary_path = Path(args.summary)
@@ -87,6 +115,7 @@ def main() -> int:
     record = {
         "timestamp": timestamp,
         "repo": _pick(summary, "repo", "repo", ""),
+        "ticket_id": args.ticket_id,
         "task_type": args.task_type,
         "risk": args.risk,
         "delegated": args.delegated == "true",
@@ -107,11 +136,13 @@ def main() -> int:
         "status": status,
         "failure_class": args.failure_class if status != "success" else None,
         "retry_count": args.retry_count,
+        "files_changed": [f.strip() for f in args.files_changed.split(",") if f.strip()] if args.files_changed else [],
     }
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, separators=(",", ":")) + "\n")
+    append_work_log(out_path, record, args.task_type)
 
     print(json.dumps({"ok": True, "out": str(out_path), "status": status, "tokens": t_total, "provider": args.provider}))
     return 0

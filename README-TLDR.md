@@ -7,19 +7,19 @@ Fast path to install, configure, and run.
 Project-local install:
 
 ```bash
-./install.sh --scope project
+./install_codex_job_skill.sh --scope project
 ```
 
 Optional (deferred/experimental queue+dashboard scripts):
 
 ```bash
-./install.sh --scope project --include-experimental
+./install_codex_job_skill.sh --scope project --include-experimental
 ```
 
 Preview only (no changes):
 
 ```bash
-./install.sh --scope project --dry-run
+./install_codex_job_skill.sh --scope project --dry-run
 ```
 
 ## 2) Set required env var
@@ -89,11 +89,11 @@ codex-job/scripts/run_codex_task.sh --doctor --repo .
 ## 7) Uninstall
 
 ```bash
-./uninstall.sh --scope project
+./uninstall_codex_job_skill.sh --scope project
 ```
 
 Preview only:
 
 ```bash
-./uninstall.sh --scope project --dry-run
+./uninstall_codex_job_skill.sh --scope project --dry-run
 ```

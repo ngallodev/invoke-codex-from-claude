@@ -26,7 +26,11 @@ Use `/codex-job` to offload implementation-ready tasks to Codex.
 2. Choose Interface and Model:
 
 ### Using Codex
-- Choose Model: `gpt-5.1-codex-mini` (simple), `gpt-5.1-codex-max` (default), `gpt-5.2-codex` (complex)
+- Choose Model:
+  - `gpt-5.1-codex-mini` — default for most implementation tasks (single subsystem, clear write set, runnable tests)
+  - `gpt-5.4-mini` — for higher-complexity tasks (cross-cutting changes, full-stack wiring, multiple coordinated files)
+  - Anything larger: break the task into smaller tickets first. If it genuinely cannot be split, ask the user before proceeding.
+- Larger models are available by explicit user request/authorization only: `gpt-5.4`, `gpt-5.3-codex`, `gpt-5.2`, `gpt-5.1-codex-max`.
 - Launch with: `scripts/invoke_codex_with_review.sh --repo <path> --task "<task>"`
 - Prefer `--notify-cmd "scripts/notify_terminal.sh"`.
 - Note: these `scripts/...` paths are skill-local runtime scripts, not root-repo wrappers.

@@ -33,10 +33,16 @@ def extract_token_usage(log_text: str) -> dict[str, Any]:
         "input_tokens": [
             r"input[_\s-]?tokens?\s*[:=]\s*([0-9][0-9,]*)",
             r"prompt[_\s-]?tokens?\s*[:=]\s*([0-9][0-9,]*)",
+            r'"input_tokens"\s*:\s*([0-9][0-9,]*)',
+            r'"prompt_tokens"\s*:\s*([0-9][0-9,]*)',
+            r'in(?:put)?\s*=\s*([0-9][0-9,]*)\s*(?:tok|tokens?)\s*out',
         ],
         "output_tokens": [
             r"output[_\s-]?tokens?\s*[:=]\s*([0-9][0-9,]*)",
             r"completion[_\s-]?tokens?\s*[:=]\s*([0-9][0-9,]*)",
+            r'"output_tokens"\s*:\s*([0-9][0-9,]*)',
+            r'"completion_tokens"\s*:\s*([0-9][0-9,]*)',
+            r'out(?:put)?\s*=\s*([0-9][0-9,]*)\s*tok',
         ],
         "total_tokens": [
             r"total[_\s-]?tokens?\s*[:=]\s*([0-9][0-9,]*)",
@@ -63,6 +69,9 @@ def extract_token_usage(log_text: str) -> dict[str, Any]:
     if result["total_tokens"] is None and result["input_tokens"] is not None and result["output_tokens"] is not None:
         result["total_tokens"] = result["input_tokens"] + result["output_tokens"]
         result["evidence"]["total_tokens"] = {"derived": "input_tokens + output_tokens"}
+
+    if result["input_tokens"] is None or result["output_tokens"] is None:
+        result["extraction_incomplete"] = True
 
     return result
 

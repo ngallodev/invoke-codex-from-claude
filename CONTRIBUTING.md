@@ -35,9 +35,9 @@ If you touch install/uninstall or notification flows, add/extend bats or shell t
 - [ ] For shared scripts, note coordination points (who else is editing, related branches).
 
 ## Installing Locally for Development
-- Install the skill with `./install.sh --scope project` (safe to re-run).
-- Preview changes with `./install.sh --scope project --dry-run`.
-- Uninstall with `./uninstall.sh --scope project` (or `--dry-run` to preview).
+- Install the skill with `./install_codex_job_skill.sh --scope project` (safe to re-run).
+- Preview changes with `./install_codex_job_skill.sh --scope project --dry-run`.
+- Uninstall with `./uninstall_codex_job_skill.sh --scope project` (or `--dry-run` to preview).
 
 ## Support & Questions
 - Add concise notes to `agent-history.log` for cross-agent coordination instead of posting progress in stdout.

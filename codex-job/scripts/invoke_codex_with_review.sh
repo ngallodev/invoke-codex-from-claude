@@ -272,8 +272,8 @@ if [[ "$EXIT_CODE" -ne 0 ]]; then
       echo "✓ Codex completed work (tokens used found in log)"
     fi
 
-    # Check for real failure indicators
-    if grep -qE "error: |fatal: |Exception:" "$LATEST_LOG" 2>/dev/null; then
+    # Check for real Codex runtime failure indicators (not task output content)
+    if grep -iqE "^\[error\]|^Error:|^fatal error:|^Unhandled exception" "$LATEST_LOG" 2>/dev/null; then
       REAL_FAILURE=1
     fi
 

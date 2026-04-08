@@ -7,7 +7,7 @@ codex-job/scripts/invoke_codex_with_review.sh \
   --repo <repo_path> \
   --task '<task_description_with_acceptance_criteria>' \
   --notify-cmd 'codex-job/scripts/notify_claude_hook.sh --url https://<callback> --secret "$WEBHOOK_SECRET"' \
-  -- --model gpt-5.1-codex-max
+  -- --model gpt-5.1-codex-mini
 ```
 
 Webhook payloads are HMAC-SHA256 signed when `--secret`, `WEBHOOK_SECRET`, or `CODEX_WEBHOOK_SECRET` is present; the script sends `X-Signature: sha256=<hex>`.
@@ -59,6 +59,8 @@ codex-job/scripts/write_delegation_metric.py \
 ```
 
 Pass `--status partial` when Codex partially completed the task (manual judgment based on logs/summary).
+
+Use larger models such as `gpt-5.1-codex-max` only with explicit user authorization.
 
 ## Optional Verification
 

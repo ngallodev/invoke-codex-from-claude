@@ -9,6 +9,7 @@ Preferred writer:
 Required fields:
 - `timestamp`
 - `repo`
+- `ticket_id` — ticket identifier string, empty string if not applicable
 - `task_type`
 - `risk`
 - `delegated` (boolean)
@@ -29,6 +30,7 @@ Required fields:
 - `status` (`success` | `partial` | `failure`)
 - `failure_class` (`environment` | `spec` | `execution`) — `null` when `status` is `success`
 - `retry_count`
+- `files_changed` — list of file paths written or modified by the delegate, empty list if unknown
 
 Notes:
 - `codex_tokens_input`, `codex_tokens_output`, `codex_tokens_total` come from `token_usage.input_tokens`, `token_usage.output_tokens`, `token_usage.total_tokens` in the summary. Non-Codex provider fields are zeroed.
