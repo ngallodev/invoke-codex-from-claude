@@ -6,7 +6,7 @@ fi
 
 setup() {
   ROOT_DIR="$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." && pwd)"
-  RUNNER="$ROOT_DIR/scripts/run_codex_task.sh"
+  RUNNER="$ROOT_DIR/codex-job/scripts/run_codex_task.sh"
   export CODEX_API_KEY="test-key"
   export WEBHOOK_SECRET="test-secret"
 }
@@ -275,22 +275,23 @@ PY
   rm -rf "$tmp"
 }
 
-@test "--doctor fails without CODEX_API_KEY" {
+@test "--doctor passes without CODEX_API_KEY when OAuth auth is unavailable" {
   tmp="$(mktemp -d)"
   repo="$tmp/repo"
+  home="$tmp/home"
   fake_codex="$tmp/fake_codex.sh"
-  mkdir -p "$repo"
+  mkdir -p "$repo" "$home"
 
   make_fake_codex "$fake_codex"
 
   unset CODEX_API_KEY
-  run "$RUNNER" \
+  HOME="$home" run "$RUNNER" \
     --repo "$repo" \
     --doctor \
     --codex-bin "$fake_codex"
 
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"env:CODEX_API_KEY"* ]]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"auth - CODEX_API_KEY not set"* ]]
 
   rm -rf "$tmp"
 }

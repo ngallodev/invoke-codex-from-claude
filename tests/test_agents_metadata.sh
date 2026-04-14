@@ -2,7 +2,8 @@
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-agent_dir="$root_dir/.claude/agents/team"
+primary_agent_dir="$root_dir/repo-dev-agents"
+secondary_agent_dir="$root_dir/future-plans/agents"
 
 required_agents=(
   security-hardener
@@ -28,7 +29,10 @@ required_metrics=(
 )
 
 for agent in "${required_agents[@]}"; do
-  path="$agent_dir/${agent}.md"
+  path="$primary_agent_dir/${agent}.md"
+  if [[ ! -f "$path" ]]; then
+    path="$secondary_agent_dir/${agent}.md"
+  fi
   [[ -f "$path" ]] || { echo "Missing agent file: $path" >&2; exit 1; }
   # Ensure telemetry keys are documented to keep reporting consistent.
   for metric in "${required_metrics[@]}"; do

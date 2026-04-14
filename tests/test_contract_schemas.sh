@@ -10,8 +10,8 @@ import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
-event_schema_path = root / "schemas" / "event.v1.json"
-state_machine_path = root / "schemas" / "run-state-machine.v1.json"
+event_schema_path = root / "future-plans" / "schemas" / "event.v1.json"
+state_machine_path = root / "future-plans" / "schemas" / "run-state-machine.v1.json"
 
 event_schema = json.loads(event_schema_path.read_text(encoding="utf-8"))
 state_machine = json.loads(state_machine_path.read_text(encoding="utf-8"))
