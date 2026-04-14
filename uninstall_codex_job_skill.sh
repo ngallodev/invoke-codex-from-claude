@@ -38,8 +38,6 @@ USAGE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_NAME="codex-job"
-SCRIPTS_SRC_DIR="$SCRIPT_DIR/codex-job/scripts"
-REFERENCES_SRC_DIR="$SCRIPT_DIR/codex-job/references"
 
 SCOPE=""
 DRY_RUN=0
@@ -121,10 +119,6 @@ PY
 DEST_CLAUDE_ROOT="$(abs_path "$DEST_CLAUDE_ROOT")"
 DEST_SKILLS_ROOT="$DEST_CLAUDE_ROOT/skills"
 DEST_SKILL="$DEST_SKILLS_ROOT/$SKILL_NAME"
-DEST_SKILL_SCRIPTS="$DEST_SKILL/scripts"
-DEST_SKILL_REFERENCES="$DEST_SKILL/references"
-DEST_SKILL_TEMPLATE="$DEST_SKILL/assets/templates/delegation-metrics-entry.json"
-LEGACY_SCRIPTS_ROOT="$DEST_CLAUDE_ROOT/scripts"
 
 log_step() {
   local msg="$1"
@@ -221,26 +215,12 @@ detect_profile_path() {
 log_step "Scope: $SCOPE"
 log_step "Claude root: $DEST_CLAUDE_ROOT"
 
-# Remove only codex-job skill artifacts.
-remove_path "$DEST_SKILL/SKILL.md"
-
-while IFS= read -r src; do
-  remove_path "$DEST_SKILL_REFERENCES/$(basename "$src")"
-done < <(find "$REFERENCES_SRC_DIR" -maxdepth 1 -type f | sort)
-
-while IFS= read -r src; do
-  remove_path "$DEST_SKILL_SCRIPTS/$(basename "$src")"
-done < <(find "$SCRIPTS_SRC_DIR" -maxdepth 1 -type f | sort)
-
-remove_path "$DEST_SKILL_TEMPLATE"
+remove_path "$DEST_SKILL"
 
 # Prune empty skill directories after file cleanup.
 for dir in \
-  "$DEST_SKILL/assets/templates" \
-  "$DEST_SKILL/assets" \
-  "$DEST_SKILL/references" \
-  "$DEST_SKILL/scripts" \
-  "$DEST_SKILL"; do
+  "$DEST_SKILL" \
+  "$DEST_SKILLS_ROOT"; do
   if [[ -d "$dir" ]]; then
     if [[ "$DRY_RUN" -eq 1 ]]; then
       log_step "Remove $dir if empty"
@@ -249,17 +229,6 @@ for dir in \
     fi
   fi
 done
-
-# Legacy script cleanup (pre-skill layout)
-if [[ -d "$LEGACY_SCRIPTS_ROOT" ]]; then
-  while IFS= read -r src; do
-    name="$(basename "$src")"
-    legacy="$LEGACY_SCRIPTS_ROOT/$name"
-    if [[ -f "$legacy" ]]; then
-      remove_path "$legacy"
-    fi
-  done < <(find "$SCRIPTS_SRC_DIR" -maxdepth 1 -type f | sort)
-fi
 
 PROFILE_PATH="$(detect_profile_path)"
 if [[ -n "${PROFILE_PATH:-}" ]]; then
