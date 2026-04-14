@@ -14,13 +14,20 @@ usage() {
 REPO=""
 TASK=""
 TASK_FILE=""
+RESUME_SESSION=""
 NOTIFY_CMD=""
 EVENT_STREAM=""
 CODEX_BIN=""
 LOG_DIR=""
+JSON_OUT=""
 LOG_VERBOSITY=""
 SUMMARIZE=1
 SUMMARIZER=""
+DOCTOR_MODE=0
+CACHE_ENABLED=1
+CACHE_DIR=""
+MODEL_TIER=""
+MODEL_PROVIDER=""
 EXTRA_ARGS=()
 SHOW_HELP=0
 
@@ -36,6 +43,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --task-file)
       TASK_FILE="${2:-}"
+      shift 2
+      ;;
+    --resume)
+      RESUME_SESSION="${2:-}"
       shift 2
       ;;
     --notify-cmd)
@@ -54,8 +65,32 @@ while [[ $# -gt 0 ]]; do
       LOG_DIR="${2:-}"
       shift 2
       ;;
+    --json-out)
+      JSON_OUT="${2:-}"
+      shift 2
+      ;;
     --verbosity)
       LOG_VERBOSITY="${2:-}"
+      shift 2
+      ;;
+    --doctor)
+      DOCTOR_MODE=1
+      shift
+      ;;
+    --tier)
+      MODEL_TIER="${2:-}"
+      shift 2
+      ;;
+    --provider)
+      MODEL_PROVIDER="${2:-}"
+      shift 2
+      ;;
+    --no-cache)
+      CACHE_ENABLED=0
+      shift
+      ;;
+    --cache-dir)
+      CACHE_DIR="${2:-}"
       shift 2
       ;;
     --summarize)
@@ -107,6 +142,50 @@ fi
 if [[ -z "$REPO" ]]; then
   echo "Error: --repo is required." >&2
   exit 2
+fi
+
+if [[ "$DOCTOR_MODE" -eq 1 ]]; then
+  RUNNER_ARGS=(--repo "$REPO" --doctor)
+  if [[ -n "$CODEX_BIN" ]]; then
+    RUNNER_ARGS+=(--codex-bin "$CODEX_BIN")
+  fi
+  if [[ -n "$LOG_DIR" ]]; then
+    RUNNER_ARGS+=(--log-dir "$LOG_DIR")
+  fi
+  if [[ -n "$JSON_OUT" ]]; then
+    RUNNER_ARGS+=(--json-out "$JSON_OUT")
+  fi
+  if [[ -n "$NOTIFY_CMD" ]]; then
+    RUNNER_ARGS+=(--notify-cmd "$NOTIFY_CMD")
+  fi
+  if [[ -n "$EVENT_STREAM" ]]; then
+    RUNNER_ARGS+=(--event-stream "$EVENT_STREAM")
+  fi
+  if [[ -n "$LOG_VERBOSITY" ]]; then
+    RUNNER_ARGS+=(--verbosity "$LOG_VERBOSITY")
+  fi
+  if [[ -n "$MODEL_TIER" ]]; then
+    RUNNER_ARGS+=(--tier "$MODEL_TIER")
+  fi
+  if [[ -n "$MODEL_PROVIDER" ]]; then
+    RUNNER_ARGS+=(--provider "$MODEL_PROVIDER")
+  fi
+  if [[ "$CACHE_ENABLED" -eq 0 ]]; then
+    RUNNER_ARGS+=(--no-cache)
+  fi
+  if [[ -n "$CACHE_DIR" ]]; then
+    RUNNER_ARGS+=(--cache-dir "$CACHE_DIR")
+  fi
+  if [[ "$SUMMARIZE" -eq 1 ]]; then
+    RUNNER_ARGS+=(--summarize)
+  fi
+  if [[ -n "$SUMMARIZER" ]]; then
+    RUNNER_ARGS+=(--summarizer "$SUMMARIZER")
+  fi
+  if [[ "${#EXTRA_ARGS[@]}" -gt 0 ]]; then
+    RUNNER_ARGS+=(-- "${EXTRA_ARGS[@]}")
+  fi
+  exec "$RUNNER" "${RUNNER_ARGS[@]}"
 fi
 
 run_and_capture() {
@@ -200,6 +279,23 @@ PY
   fi
 }
 
+cleanup_codex_children() {
+  local pids
+  # Find any 'codex exec' processes still running (defensive — normally codex exits cleanly)
+  pids="$(pgrep -f 'codex exec' 2>/dev/null || true)"
+  if [[ -n "$pids" ]]; then
+    echo "Cleaning up orphan codex processes: $pids"
+    kill $pids 2>/dev/null || true
+    sleep 1
+    # Force-kill any survivors
+    local survivors
+    survivors="$(pgrep -f 'codex exec' 2>/dev/null || true)"
+    if [[ -n "$survivors" ]]; then
+      kill -9 $survivors 2>/dev/null || true
+    fi
+  fi
+}
+
 echo "Launching Codex task..."
 
 # Resolve task text — read from file if --task-file was given
@@ -225,6 +321,9 @@ RUNNER_ARGS=(--repo "$REPO")
 if [[ -n "$TASK" ]]; then
   RUNNER_ARGS+=(--task "$TASK")
 fi
+if [[ -n "$RESUME_SESSION" ]]; then
+  RUNNER_ARGS+=(--resume "$RESUME_SESSION")
+fi
 if [[ -n "$NOTIFY_CMD" ]]; then
   RUNNER_ARGS+=(--notify-cmd "$NOTIFY_CMD")
 fi
@@ -237,8 +336,23 @@ fi
 if [[ -n "$LOG_DIR" ]]; then
   RUNNER_ARGS+=(--log-dir "$LOG_DIR")
 fi
+if [[ -n "$JSON_OUT" ]]; then
+  RUNNER_ARGS+=(--json-out "$JSON_OUT")
+fi
 if [[ -n "$LOG_VERBOSITY" ]]; then
   RUNNER_ARGS+=(--verbosity "$LOG_VERBOSITY")
+fi
+if [[ -n "$MODEL_TIER" ]]; then
+  RUNNER_ARGS+=(--tier "$MODEL_TIER")
+fi
+if [[ -n "$MODEL_PROVIDER" ]]; then
+  RUNNER_ARGS+=(--provider "$MODEL_PROVIDER")
+fi
+if [[ "$CACHE_ENABLED" -eq 0 ]]; then
+  RUNNER_ARGS+=(--no-cache)
+fi
+if [[ -n "$CACHE_DIR" ]]; then
+  RUNNER_ARGS+=(--cache-dir "$CACHE_DIR")
 fi
 if [[ "$SUMMARIZE" -eq 1 ]]; then
   RUNNER_ARGS+=(--summarize)
@@ -371,24 +485,6 @@ if [[ "$EXIT_CODE" -ne 0 ]]; then
 fi
 
 echo "✓ Task completed successfully"
-
-# Kill any orphan codex subprocesses left over from this run
-cleanup_codex_children() {
-  local pids
-  # Find any 'codex exec' processes still running (defensive — normally codex exits cleanly)
-  pids="$(pgrep -f 'codex exec' 2>/dev/null || true)"
-  if [[ -n "$pids" ]]; then
-    echo "Cleaning up orphan codex processes: $pids"
-    kill $pids 2>/dev/null || true
-    sleep 1
-    # Force-kill any survivors
-    local survivors
-    survivors="$(pgrep -f 'codex exec' 2>/dev/null || true)"
-    if [[ -n "$survivors" ]]; then
-      kill -9 $survivors 2>/dev/null || true
-    fi
-  fi
-}
 cleanup_codex_children
 
 exit 0

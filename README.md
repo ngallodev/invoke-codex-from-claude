@@ -23,7 +23,7 @@ Quickstart: see `README-TLDR.md` for the shortest install/setup/use path.
   - User/global: `./install_codex_job_skill.sh --scope user`
 - Preview without changes: append `--dry-run`.
 - Uninstall: `./uninstall_codex_job_skill.sh --scope user` (add `--dry-run` to preview).
-- Skill assets live in `.claude/skills/codex-job/`; runtime scripts are copied into that skill’s `scripts/` directory. PATH edits are wrapped in tagged blocks for safe re-run and removal.
+- Skill assets live in `.claude/skills/codex-job/`; the install mirrors the full `codex-job/` tree into that location, including nested reference files. PATH edits are wrapped in tagged blocks for safe re-run and removal.
 
 ## End-to-End Example (Codex)
 
@@ -182,4 +182,4 @@ PY
 
 ## Uninstall
 
-`./uninstall_codex_job_skill.sh --scope user` removes the installed skill and legacy root-level scripts; add `--dry-run` to preview.
+`./uninstall_codex_job_skill.sh --scope user` removes the installed skill tree; add `--dry-run` to preview.

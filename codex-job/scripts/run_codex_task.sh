@@ -366,7 +366,7 @@ for line in sys.stdin:
         if model.get('tier') == tier and model.get('provider') == provider:
             print(model['model_id'])
             sys.exit(0)
-    except:
+    except json.JSONDecodeError:
         continue
 " 2>/dev/null)
 

@@ -40,10 +40,7 @@ USAGE
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_NAME="codex-job"
-SKILL_SRC_FILE="$SCRIPT_DIR/codex-job/SKILL.md"
-REFERENCES_SRC_DIR="$SCRIPT_DIR/codex-job/references"
-SCRIPTS_SRC_DIR="$SCRIPT_DIR/codex-job/scripts"
-TEMPLATE_SRC_FILE="$SCRIPT_DIR/codex-job/assets/templates/delegation-metrics-entry.json"
+SKILL_SRC_ROOT="$SCRIPT_DIR/codex-job"
 
 SCOPE=""
 DRY_RUN=0
@@ -118,20 +115,8 @@ case "$SCOPE" in
     ;;
 esac
 
-if [[ ! -f "$SKILL_SRC_FILE" ]]; then
-  echo "Error: skill source not found: $SKILL_SRC_FILE" >&2
-  exit 2
-fi
-if [[ ! -d "$REFERENCES_SRC_DIR" ]]; then
-  echo "Error: references source not found: $REFERENCES_SRC_DIR" >&2
-  exit 2
-fi
-if [[ ! -d "$SCRIPTS_SRC_DIR" ]]; then
-  echo "Error: scripts source not found: $SCRIPTS_SRC_DIR" >&2
-  exit 2
-fi
-if [[ ! -f "$TEMPLATE_SRC_FILE" ]]; then
-  echo "Error: template source not found: $TEMPLATE_SRC_FILE" >&2
+if [[ ! -d "$SKILL_SRC_ROOT" ]]; then
+  echo "Error: skill source not found: $SKILL_SRC_ROOT" >&2
   exit 2
 fi
 
@@ -148,9 +133,7 @@ DEST_CLAUDE_ROOT="$(abs_path "$DEST_CLAUDE_ROOT")"
 DEST_SKILLS_ROOT="$DEST_CLAUDE_ROOT/skills"
 DEST_SKILL="$DEST_SKILLS_ROOT/$SKILL_NAME"
 DEST_SKILL_SCRIPTS="$DEST_SKILL/scripts"
-DEST_SKILL_REFERENCES="$DEST_SKILL/references"
-DEST_SKILL_TEMPLATE_DIR="$DEST_SKILL/assets/templates"
-LEGACY_SCRIPTS_ROOT="$DEST_CLAUDE_ROOT/scripts"
+SOURCE_FILES_ROOT="$SKILL_SRC_ROOT"
 
 log_step() {
   local msg="$1"
@@ -167,40 +150,24 @@ ensure_dir() {
   [[ "$DRY_RUN" -eq 1 ]] || mkdir -p "$dir"
 }
 
-copy_file() {
-  local src="$1"
-  local dest="$2"
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    log_step "Copy $src -> $dest"
-  else
-    mkdir -p "$(dirname "$dest")"
-    cp "$src" "$dest"
-  fi
-}
-
-sync_skill_files() {
+sync_skill_tree() {
   ensure_dir "$DEST_SKILL"
-  ensure_dir "$DEST_SKILL_REFERENCES"
-  ensure_dir "$DEST_SKILL_SCRIPTS"
-  ensure_dir "$DEST_SKILL_TEMPLATE_DIR"
 
-  copy_file "$SKILL_SRC_FILE" "$DEST_SKILL/SKILL.md"
-
-  local src
+  local src rel dest
   while IFS= read -r src; do
-    copy_file "$src" "$DEST_SKILL_REFERENCES/$(basename "$src")"
-  done < <(find "$REFERENCES_SRC_DIR" -maxdepth 1 -type f | sort)
-
-  while IFS= read -r src; do
-    local dest="$DEST_SKILL_SCRIPTS/$(basename "$src")"
-    copy_file "$src" "$dest"
-    if [[ "$DRY_RUN" -eq 0 ]]; then
-      chmod +x "$dest"
-      log_step "Installed script $dest"
+    rel="${src#"$SOURCE_FILES_ROOT"/}"
+    dest="$DEST_SKILL/$rel"
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      log_step "Copy $src -> $dest"
+    else
+      mkdir -p "$(dirname "$dest")"
+      cp -p "$src" "$dest"
     fi
-  done < <(find "$SCRIPTS_SRC_DIR" -maxdepth 1 -type f | sort)
-
-  copy_file "$TEMPLATE_SRC_FILE" "$DEST_SKILL_TEMPLATE_DIR/delegation-metrics-entry.json"
+  done < <(
+    find "$SOURCE_FILES_ROOT" \
+      \( -type d -name '__pycache__' -prune \) -o \
+      \( -type f ! -name '*.pyc' -print \) | sort
+  )
 }
 
 update_profile_block() {
@@ -281,7 +248,7 @@ if [[ "$INCLUDE_EXPERIMENTAL" -eq 1 ]]; then
   log_step "--include-experimental is no-op; all codex-job scripts are installed."
 fi
 
-sync_skill_files
+sync_skill_tree
 
 PROFILE_PATH="$(detect_profile_path)"
 if [[ -n "${PROFILE_PATH:-}" ]]; then
@@ -289,19 +256,5 @@ if [[ -n "${PROFILE_PATH:-}" ]]; then
 else
   log_step "No profile updated (project scope or not provided)"
 fi
-
-# Clean legacy root-level runtime scripts from older installs.
-while IFS= read -r src; do
-  name="$(basename "$src")"
-  legacy="$LEGACY_SCRIPTS_ROOT/$name"
-  if [[ -f "$legacy" ]]; then
-    if [[ "$DRY_RUN" -eq 1 ]]; then
-      log_step "Remove legacy script $legacy"
-    else
-      rm -f "$legacy"
-      log_step "Removed legacy script $legacy"
-    fi
-  fi
-done < <(find "$SCRIPTS_SRC_DIR" -maxdepth 1 -type f | sort)
 
 log_step "Install completed"

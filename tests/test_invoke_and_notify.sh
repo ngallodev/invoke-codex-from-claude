@@ -3,8 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-RUNNER="$ROOT_DIR/scripts/run_codex_task.sh"
-INVOKER="$ROOT_DIR/scripts/invoke_codex_with_review.sh"
+RUNNER="$ROOT_DIR/codex-job/scripts/run_codex_task.sh"
+INVOKER="$ROOT_DIR/codex-job/scripts/invoke_codex_with_review.sh"
 export CODEX_API_KEY="test-key"
 export WEBHOOK_SECRET="test-secret"
 
@@ -248,11 +248,92 @@ run_test_invoke_summary_defaults() {
   pass "invoke summarize default + no-summarize override"
 }
 
+make_fake_codex_model_probe() {
+  local out="$1"
+  cat > "$out" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" != "exec" || "${2:-}" != "--cd" ]]; then
+  echo "expected codex exec --cd" >&2
+  exit 64
+fi
+
+REPO_ARG="${3:-}"
+TASK_ARG="${4:-}"
+shift 4
+
+MODEL="missing"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --model)
+      MODEL="${2:-}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+echo "fake_codex_cwd=$REPO_ARG"
+echo "fake_codex_task=$TASK_ARG"
+echo "fake_codex_model=$MODEL"
+echo "session id: 11111111-2222-3333-4444-555555555555"
+echo "tokens used: 9"
+exit 0
+FAKE
+  chmod +x "$out"
+}
+
+run_test_invoke_tier_and_provider_passthrough() {
+  local tmp
+  tmp="$(mktemp -d)"
+
+  local fake_codex="$tmp/fake_codex.sh"
+  local repo="$tmp/repo"
+  local log_dir="$tmp/runs"
+  local out="$tmp/invoke.out"
+  local summary="$tmp/invoke.summary.json"
+  mkdir -p "$repo" "$log_dir"
+
+  make_fake_codex_model_probe "$fake_codex"
+
+  set +e
+  "$INVOKER" \
+    --repo "$repo" \
+    --task "tier probe" \
+    --codex-bin "$fake_codex" \
+    --log-dir "$log_dir" \
+    --json-out "$summary" \
+    --tier medium \
+    --provider anthropic \
+    > "$out" 2>&1
+  local code=$?
+  set -e
+
+  assert_eq "0" "$code" "invoke exit code for tier/provider passthrough"
+  [ -f "$summary" ]
+
+  log_file="$(extract_kv "$out" log_file)"
+  assert_file_exists "$log_file"
+
+  model_line="$(rg -n '^fake_codex_model=' "$log_file" | tail -n1 | cut -d: -f2-)"
+  assert_eq "fake_codex_model=claude-sonnet-4-6" "$model_line" "anthropic tier model"
+  assert_eq "claude-sonnet-4-6" "$(json_get "$summary" mdl)" "summary model id"
+  assert_eq "medium" "$(json_get "$summary" tier)" "summary tier"
+  assert_eq "tier_flag" "$(json_get "$summary" msrc)" "summary model source"
+
+  rm -rf "$tmp"
+  pass "invoke forwards --tier/--provider to runner model selection"
+}
+
 main() {
   run_test_quote_safe_metadata_and_notify_events
   run_test_invoke_environmental_failure_treated_success
   run_test_invoke_real_failure_triggers_review_and_events
   run_test_invoke_summary_defaults
+  run_test_invoke_tier_and_provider_passthrough
   echo "All tests passed."
 }
 

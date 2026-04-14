@@ -3,8 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-QUEUE="$ROOT_DIR/codex-job/scripts/job_queue.py"
-SERVER="$ROOT_DIR/codex-job/scripts/job_queue_server.py"
+QUEUE="$ROOT_DIR/future-plans/queue/job_queue.py"
+SERVER="$ROOT_DIR/future-plans/queue/job_queue_server.py"
 
 fail() {
   echo "[FAIL] $*" >&2
